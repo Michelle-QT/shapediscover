@@ -52,7 +52,7 @@ def shapediscover_plot(
 
     # Initialization precover
     if "initialization_precover" in plot_subfunctions:
-        if shapediscover.initialization_precover_ is None:
+        if getattr(shapediscover, "initialization_precover_", None) is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
         plot_pointcloud_with_function(
@@ -66,7 +66,7 @@ def shapediscover_plot(
 
     # Precover
     if "precover" in plot_subfunctions:
-        if shapediscover.precover_ is None:
+        if getattr(shapediscover, "precover_", None) is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
         plot_pointcloud_with_function(
@@ -80,7 +80,7 @@ def shapediscover_plot(
 
     # Fuzzy Cover
     if "fuzzy_cover" in plot_subfunctions:
-        if shapediscover.cover_ is None:
+        if getattr(shapediscover, "cover_", None) is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
         plot_pointcloud_with_function(
@@ -94,7 +94,7 @@ def shapediscover_plot(
 
     # Cover
     if "cover" in plot_subfunctions:
-        if shapediscover.cover_ is None:
+        if getattr(shapediscover, "cover_", None) is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
         # cover_ is (n_points, n_cover); threshold_fuzzy_cover works on the
@@ -122,7 +122,7 @@ def shapediscover_plot(
 
     # Nerve
     if "nerve" in plot_subfunctions:
-        if shapediscover.cover_ is None:
+        if getattr(shapediscover, "cover_", None) is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
         if plot_name:
@@ -146,7 +146,7 @@ def shapediscover_plot(
 
     # Persistence barcode
     if "barcode" in plot_subfunctions:
-        if shapediscover.gudhi_persistence_diagram_ is None:
+        if getattr(shapediscover, "gudhi_persistence_diagram_", None) is None:
             raise Exception(
                 "Must call fit_persistence() on the ShapeDiscover object first."
             )

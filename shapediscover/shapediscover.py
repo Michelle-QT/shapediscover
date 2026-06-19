@@ -3,6 +3,7 @@ import numpy as np
 import time
 
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
 
 from .parametric_fuzzy_cover import (
     PointCloudFunction,
@@ -175,23 +176,17 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.verbose = verbose
         self.plot_loss_curve = plot_loss_curve
         self.random_state = random_state
+        # Fitted attributes (graph_, cover_, precover_, ...) are intentionally
+        # not set here: scikit-learn convention is that __init__ stores only the
+        # constructor arguments, and that trailing-underscore attributes appear
+        # only after fit (so check_is_fitted works). They are populated by fit /
+        # fit_persistence.
 
-        # Fitted attributes (populated by fit / fit_persistence). They are set
-        # to None up front so the "is None" checks below and in the plotting
-        # helpers can detect an unfitted estimator.
-        self.graph_ = None
-        self.initialization_precover_ = None
-        self.model_ = None
-        self.initialization_losses_ = None
-        self.historical_outputs_ = None
-        self.main_optimization_losses_ = None
-        self.loss_names_ = None
-        self.precover_ = None
-        self.cover_ = None
-
-        self.simplex_tree_ = None
-        self.persistence_diagram_ = None
-        self.gudhi_persistence_diagram_ = None
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        # default random_state is None, so repeated fits need not be identical
+        tags.non_deterministic = True
+        return tags
 
     def fit(self, X: np.ndarray, y=None) -> "ShapeDiscover":
         """Learn the fuzzy cover of the point cloud ``X``.
@@ -518,8 +513,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         ``set_function`` model has no out-of-sample mapping), so ``X`` is
         ignored and present only for scikit-learn API consistency.
         """
-        if getattr(self, "cover_", None) is None:
-            raise Exception("Must fit the ShapeDiscover object before transform.")
+        check_is_fitted(self, "cover_")
         return self.cover_
 
     def fit_persistence(
@@ -543,8 +537,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         """
         if max_dimension < 0:
             raise ValueError(f"max_dimension must be non-negative; got {max_dimension}.")
-        if self.cover_ is None:
-            raise Exception("Must fit the ShapeDiscover object.")
+        check_is_fitted(self, "cover_")
 
         time_start = time.time()
         # cover_ is (n_points, n_cover); the nerve construction expects the
@@ -666,7 +659,11 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
         self.fuzzy_clustering = fuzzy_clustering
         self.random_state = random_state
 
-        self.cover_ = None
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        # default random_state is None, so repeated fits need not be identical
+        tags.non_deterministic = True
+        return tags
 
     def fit(self, X: np.ndarray, y=None) -> "ShapeDiscoverLite":
         """Fit the model to the input data ``X``. Returns ``self``.
@@ -709,8 +706,7 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
         The cover is tied to the point cloud passed to ``fit``, so ``X`` is
         ignored and present only for scikit-learn API consistency.
         """
-        if getattr(self, "cover_", None) is None:
-            raise Exception("Must fit the ShapeDiscoverLite object before transform.")
+        check_is_fitted(self, "cover_")
         return self.cover_
 
 
