@@ -23,6 +23,8 @@ Some examples require extra libraries that can be installed with:
 These are two small examples that use `ShapeDiscoverLite`, which is the currently recommended interface.
 See notebooks in the `examples` directory for more examples.
 
+`fit_transform` returns the fuzzy cover as a NumPy array of shape `(n_points, n_cover)` (one row per data point, one column per cover element). The estimators follow the scikit-learn API; pass an integer `random_state` (e.g. `ShapeDiscoverLite(25, random_state=0)`) for reproducible runs.
+
 ### Topological inference
 Recovering the topology of a two-dimensional sphere.
 We choose a cover with 25 elements for illustration purposes, but ShapeDiscover recovers the correct topology with as few as 5 cover elements.
