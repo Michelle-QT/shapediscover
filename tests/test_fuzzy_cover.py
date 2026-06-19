@@ -69,7 +69,7 @@ def test_fuzzy_cover_to_filtered_complex_births():
 
 def test_fuzzy_cover_from_kmeans_is_one_hot():
     pts = np.array([[0.0, 0.0], [0.1, 0.0], [5.0, 5.0], [5.1, 5.0]])
-    membership = fuzzy_cover_from_kmeans(pts, 2, seed=0)
+    membership = fuzzy_cover_from_kmeans(pts, 2, random_state=0)
     assert membership.shape == (2, 4)
     # each point belongs to exactly one cluster
     np.testing.assert_array_equal(membership.sum(axis=0), [1, 1, 1, 1])

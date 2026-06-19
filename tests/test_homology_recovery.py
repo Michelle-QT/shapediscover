@@ -18,7 +18,7 @@ from shapediscover import FuzzyCoverPersistence, ShapeDiscoverLite
 
 def _recovery_quotient(X, n_cover, target_betti):
     max_dimension = len(target_betti) - 1
-    cover = ShapeDiscoverLite(n_cover=n_cover).fit_transform(X)
+    cover = ShapeDiscoverLite(n_cover=n_cover, random_state=0).fit_transform(X)
     diagram = FuzzyCoverPersistence(
         max_dimension=max_dimension, log_rescaling=True
     ).fit_transform(cover)

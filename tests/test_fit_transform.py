@@ -31,8 +31,9 @@ def test_fit_transform_is_a_valid_fuzzy_cover(points):
 
 
 def test_fit_transform_is_deterministic(points):
-    first = ShapeDiscoverLite(n_cover=8).fit_transform(points)
-    second = ShapeDiscoverLite(n_cover=8).fit_transform(points)
+    # a fixed random_state makes the whole pipeline reproducible
+    first = ShapeDiscoverLite(n_cover=8, random_state=0).fit_transform(points)
+    second = ShapeDiscoverLite(n_cover=8, random_state=0).fit_transform(points)
     assert np.array_equal(first, second)
 
 
