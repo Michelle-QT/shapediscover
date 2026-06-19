@@ -203,10 +203,9 @@ class WeightedGraph:
 def graph_from_pointcloud(
     pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None
 ):
-    # TODO: pass metric to knn
     n_points = pointcloud.shape[0]
     if algorithm == "knn":
-        ball_tree = BallTree(pointcloud)
+        ball_tree = BallTree(pointcloud, metric=metric)
         _, neighbor_indices = ball_tree.query(pointcloud, n_neighbors)
         adjacency_matrix = sp.sparse.lil_array((n_points, n_points))
         for i in range(n_points):
