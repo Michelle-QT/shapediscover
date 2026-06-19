@@ -8,13 +8,21 @@ from sklearn.decomposition import TruncatedSVD
 
 
 class WeightedGraph:
-    def __init__(self, adjacency_matrix):
+    def __init__(
+        self, adjacency_matrix, flat_neighbors=None, flat_neighbors_start_end=None
+    ):
         """
         Assumptions:
             - Simple, undirected, weighted graph, without loops, encoded as weighted symmetric adjacency matrix.
             - Input is scipy sparse matrix.
+
+        ``flat_neighbors`` / ``flat_neighbors_start_end`` optionally provide a
+        precomputed adjacency list (see ``efficient_adjacency_list``); when
+        omitted it is derived from the adjacency matrix on first use.
         """
         self._adjacency_matrix = adjacency_matrix
+        self.flat_neighbors_ = flat_neighbors
+        self.flat_neighbors_start_end_ = flat_neighbors_start_end
 
     def adjacency_matrix(self):
         return self._adjacency_matrix
@@ -83,7 +91,10 @@ class WeightedGraph:
         )
 
     def efficient_adjacency_list(self):
-        if self.flat_neighbors_ is not None:
+        if (
+            self.flat_neighbors_ is not None
+            and self.flat_neighbors_start_end_ is not None
+        ):
             return self.flat_neighbors_, self.flat_neighbors_start_end_
         else:
             n_points = self.n_vertices()
@@ -200,10 +211,8 @@ def graph_from_pointcloud(pointcloud, n_neighbors, algorithm="knn", metric="eucl
             adjacency_matrix[i, neighbor_indices[i]] = 1
             adjacency_matrix[i, i] = 0
         adjacency_matrix = sp.sparse.coo_array(adjacency_matrix)
-        symmetric_adjacency_matrix = adjacency_matrix.maximum(adjacency_matrix.T)
-        out = WeightedGraph(symmetric_adjacency_matrix)
-
-        out.flat_neighbors_ = neighbor_indices.flatten()
+        adjacency_matrix = adjacency_matrix.maximum(adjacency_matrix.T)
+        flat_neighbors = neighbor_indices.flatten()
 
     elif algorithm == "umap":
         import umap
@@ -211,30 +220,30 @@ def graph_from_pointcloud(pointcloud, n_neighbors, algorithm="knn", metric="eucl
         adjacency_matrix, _, _ = umap.umap_.fuzzy_simplicial_set(
             pointcloud, n_neighbors, random_state=None, metric=metric
         )
-        out = WeightedGraph(adjacency_matrix)
-
-        out.flat_neighbors_ = np.array(umap.umap_.nearest_neighbors(
-            pointcloud,
-            n_neighbors,
-            metric=metric,
-            metric_kwds={},
-            angular=False,
-            random_state=None,
-        )[0], dtype=int).flatten()
+        flat_neighbors = np.array(
+            umap.umap_.nearest_neighbors(
+                pointcloud,
+                n_neighbors,
+                metric=metric,
+                metric_kwds={},
+                angular=False,
+                random_state=None,
+            )[0],
+            dtype=int,
+        ).flatten()
 
     else:
         raise Exception("Algorithm not recognized", algorithm)
 
-    flat_neighbors_start_end_col0 = np.arange(
-        0, n_points * n_neighbors, n_neighbors, dtype=int
-    )
-    flat_neighbors_start_end_col1 = (
-        np.arange(0, n_points * n_neighbors, n_neighbors, dtype=int) + n_neighbors - 1
-    )
+    # the flat adjacency list is stored with a uniform stride of n_neighbors
+    starts = np.arange(0, n_points * n_neighbors, n_neighbors, dtype=int)
     flat_neighbors_start_end = np.zeros((n_points, 2), dtype=int)
-    flat_neighbors_start_end[:, 0] = flat_neighbors_start_end_col0
-    flat_neighbors_start_end[:, 1] = flat_neighbors_start_end_col1
-    out.flat_neighbors_start_end_ = flat_neighbors_start_end
+    flat_neighbors_start_end[:, 0] = starts
+    flat_neighbors_start_end[:, 1] = starts + n_neighbors - 1
 
-    return out
+    return WeightedGraph(
+        adjacency_matrix,
+        flat_neighbors=flat_neighbors,
+        flat_neighbors_start_end=flat_neighbors_start_end,
+    )
 
