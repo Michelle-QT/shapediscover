@@ -5,7 +5,6 @@ from scipy.special import comb
 from sklearn.preprocessing import OneHotEncoder, Normalizer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-import skfuzzy
 
 from .utils import scipy_sparse_matrix_to_torch_sparse
 from .persistence_based_clustering import persistence_based_flattening
@@ -208,6 +207,14 @@ def fuzzy_cover_from_kmeans(pointcloud, n_clusters, seed=None):
 
 
 def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, seed=None):
+    try:
+        import skfuzzy
+    except ImportError as e:
+        raise ImportError(
+            "scikit-fuzzy is required for the 'spectral_fuzzy_clustering' "
+            "initialization. Install it with `pip install scikit-fuzzy` "
+            "(it is part of this package's optional 'extras')."
+        ) from e
     _, fuzzy_clustering, _, _, _, _, _ = skfuzzy.cluster.cmeans(
         pointcloud.T, n_clusters, 2, error=0.005, maxiter=1000, init=None
     )
