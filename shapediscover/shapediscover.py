@@ -116,8 +116,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         Whether to print timing information while fitting.
     plot_loss_curve : bool
         Whether to plot the loss curves while fitting.
-    seed : int
-        Random seed for initialization and optimization.
+    random_state : int, RandomState instance or None
+        Controls the randomness of the graph construction, initialization, and
+        optimization. Pass an int for reproducible runs; ``None`` (the default)
+        draws fresh randomness each run.
 
     Attributes
     ----------
@@ -150,8 +152,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         n_saved_iterations: int = 0,
         verbose: bool = True,
         plot_loss_curve: bool = True,
-        # TODO: use random_state and a numpy.random.Generator object
-        seed: int = 0,
+        random_state=None,
     ):
         # scikit-learn convention: __init__ only stores the constructor
         # arguments verbatim (no validation or transformation), so that
@@ -173,7 +174,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.n_saved_iterations = n_saved_iterations
         self.verbose = verbose
         self.plot_loss_curve = plot_loss_curve
-        self.seed = seed
+        self.random_state = random_state
 
         # Fitted attributes (populated by fit / fit_persistence). They are set
         # to None up front so the "is None" checks below and in the plotting
@@ -233,7 +234,16 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         inner_layer_widths = self.inner_layer_widths
         optimization_algorithm = "adam"
 
-        torch.manual_seed(self.seed)
+        # a single master RNG drives every stochastic step (graph construction,
+        # clustering init, torch model init, stochastic loss sampling); a fixed
+        # random_state therefore gives reproducible runs, and nothing mutates
+        # global numpy / torch random state beyond the local torch seeding below
+        rng = np.random.default_rng(self.random_state)
+
+        def _next_seed():
+            return int(rng.integers(0, np.iinfo(np.int32).max))
+
+        torch.manual_seed(_next_seed())
 
         if self.verbose:
             print("pointcloud shape:", X.shape)
@@ -241,7 +251,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # 0. Preprocessing: knn graph
         time_start = time.time()
         graph = graph_from_pointcloud(
-            X, n_neighbors=self.knn, algorithm=self.graph_algorithm
+            X,
+            n_neighbors=self.knn,
+            algorithm=self.graph_algorithm,
+            random_state=_next_seed(),
         )
         laplacian_eigenmaps = None
         self.graph_ = graph
@@ -261,23 +274,27 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             time_start = time.time()
             if self.initialization_algorithm == "kmeans":
                 clustering = fuzzy_cover_from_kmeans(
-                    X, n_clusters=self.n_cover, seed=self.seed
+                    X, n_clusters=self.n_cover, random_state=_next_seed()
                 )
             elif self.initialization_algorithm == "spectral_clustering":
                 if laplacian_eigenmaps is None:
                     laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        n_eigenfunctions
+                        n_eigenfunctions, random_state=_next_seed()
                     )
                 clustering = fuzzy_cover_from_kmeans(
-                    laplacian_eigenmaps, n_clusters=self.n_cover, seed=self.seed
+                    laplacian_eigenmaps,
+                    n_clusters=self.n_cover,
+                    random_state=_next_seed(),
                 )
             elif self.initialization_algorithm == "spectral_fuzzy_clustering":
                 if laplacian_eigenmaps is None:
                     laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        n_eigenfunctions
+                        n_eigenfunctions, random_state=_next_seed()
                     )
                 clustering = fuzzy_cover_from_fuzzycmeans(
-                    laplacian_eigenmaps, n_clusters=self.n_cover, seed=self.seed
+                    laplacian_eigenmaps,
+                    n_clusters=self.n_cover,
+                    random_state=_next_seed(),
                 )
 
             # stored in the public (n_points, n_cover) orientation
@@ -289,7 +306,11 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # 2. Construct optimizable partition of unity
         if self.model == "set_function":
             if self.initialization_algorithm == "random":
-                vector_valued_function = SetFunction(n_points, self.n_cover)
+                vector_valued_function = SetFunction(
+                    n_points,
+                    self.n_cover,
+                    initialization=rng.random((self.n_cover, n_points)),
+                )
             else:
                 vector_valued_function = SetFunction(
                     n_points, self.n_cover, initialization=clustering
@@ -305,7 +326,9 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
                 n_inner_layers = 2
                 inner_layer_widths = [self.n_cover for _ in range(n_inner_layers)]
             if laplacian_eigenmaps is None:
-                laplacian_eigenmaps = graph.laplacian_eigenfunctions(n_eigenfunctions)
+                laplacian_eigenmaps = graph.laplacian_eigenfunctions(
+                    n_eigenfunctions, random_state=_next_seed()
+                )
             node_features = laplacian_eigenmaps
             vector_valued_function = GraphFunction(
                 graph,
@@ -374,7 +397,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             )
 
         loss_function = FuzzyCoverLossFunction(
-            graph, loss_weights, loss_probabilities, log=True, seed=self.seed
+            graph, loss_weights, loss_probabilities, log=True, random_state=_next_seed()
         )
 
         if self.early_stop:
@@ -539,6 +562,9 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
     fuzzy_clustering : bool, optional
         Whether to use fuzzy clustering initialization (default is False).
         Should be kept as is unless you know what you are doing.
+    random_state : int, RandomState instance or None
+        Controls the randomness of the pipeline. Pass an int for reproducible
+        runs; ``None`` (the default) draws fresh randomness each run.
 
     Attributes
     ----------
@@ -560,6 +586,7 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
         n_max_iter: int = 500,
         early_stop_tolerance: float = 1e-5,
         fuzzy_clustering: bool = False,
+        random_state=None,
     ):
         self.n_cover = n_cover
         self.knn = knn
@@ -568,6 +595,7 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
         self.n_max_iter = n_max_iter
         self.early_stop_tolerance = early_stop_tolerance
         self.fuzzy_clustering = fuzzy_clustering
+        self.random_state = random_state
 
         self.cover_ = None
 
@@ -600,6 +628,7 @@ class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
             early_stop_tolerance=self.early_stop_tolerance,
             verbose=False,
             plot_loss_curve=False,
+            random_state=self.random_state,
         )
         self._discover.fit(X)
         self.cover_ = self._discover.cover_

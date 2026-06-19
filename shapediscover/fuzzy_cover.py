@@ -18,9 +18,10 @@ class FuzzyCoverLossFunction:
         weights=None,
         probabilities=None,
         log=False,
-        seed=None,
+        random_state=None,
     ):
-        np.random.seed(seed)
+        # instance-local RNG for the stochastic loss sampling (no global side effect)
+        self._rng = np.random.default_rng(random_state)
 
         number_of_losses = 4
         if weights is None:
@@ -118,7 +119,7 @@ class FuzzyCoverLossFunction:
             # stochastic part
             if self._loss_weights[i] == 0 or (
                 self._probabilities[i] != 1.0
-                and np.random.random_sample() > self._probabilities[i]
+                and self._rng.random() > self._probabilities[i]
             ):
                 continue
             weighted_numerical_loss = weight * loss_function(pou)
@@ -198,8 +199,8 @@ def fuzzy_cover_to_filtered_complex(functions, max_dimension=1):
     return FilteredComplex(simplices, births)
 
 
-def fuzzy_cover_from_kmeans(pointcloud, n_clusters, seed=None):
-    clusterer = KMeans(n_clusters=n_clusters, n_init="auto", random_state=seed)
+def fuzzy_cover_from_kmeans(pointcloud, n_clusters, random_state=None):
+    clusterer = KMeans(n_clusters=n_clusters, n_init="auto", random_state=random_state)
     clustering_labels = np.array(clusterer.fit_predict(pointcloud)).reshape(-1, 1)
 
     # print(np.sort(np.unique(clusterer.labels_, return_counts=True)[1]))
@@ -210,7 +211,7 @@ def fuzzy_cover_from_kmeans(pointcloud, n_clusters, seed=None):
     return clustering_as_function_to_simplex
 
 
-def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, seed=None):
+def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, random_state=None):
     try:
         import skfuzzy
     except ImportError as e:
@@ -220,7 +221,8 @@ def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, seed=None):
             "(it is part of this package's optional 'extras')."
         ) from e
     _, fuzzy_clustering, _, _, _, _, _ = skfuzzy.cluster.cmeans(
-        pointcloud.T, n_clusters, 2, error=0.005, maxiter=1000, init=None
+        pointcloud.T, n_clusters, 2, error=0.005, maxiter=1000, init=None,
+        seed=random_state,
     )
     return simplex_to_psimplex_numpy(fuzzy_clustering,p=float("inf"))
 

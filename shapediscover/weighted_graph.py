@@ -200,7 +200,9 @@ class WeightedGraph:
             return gen.uniform(low=-10.0, high=10.0, size=(graph.shape[0], dim))
 
 
-def graph_from_pointcloud(pointcloud, n_neighbors, algorithm="knn", metric="euclidean"):
+def graph_from_pointcloud(
+    pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None
+):
     # TODO: pass metric to knn
     n_points = pointcloud.shape[0]
     if algorithm == "knn":
@@ -218,7 +220,7 @@ def graph_from_pointcloud(pointcloud, n_neighbors, algorithm="knn", metric="eucl
         import umap
 
         adjacency_matrix, _, _ = umap.umap_.fuzzy_simplicial_set(
-            pointcloud, n_neighbors, random_state=None, metric=metric
+            pointcloud, n_neighbors, random_state=random_state, metric=metric
         )
         flat_neighbors = np.array(
             umap.umap_.nearest_neighbors(
@@ -227,7 +229,7 @@ def graph_from_pointcloud(pointcloud, n_neighbors, algorithm="knn", metric="eucl
                 metric=metric,
                 metric_kwds={},
                 angular=False,
-                random_state=None,
+                random_state=random_state,
             )[0],
             dtype=int,
         ).flatten()
