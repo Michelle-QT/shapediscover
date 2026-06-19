@@ -1,0 +1,7 @@
+Algorithm,2-sph 5,3-sph 19,human 19,dynam 52
+S + Rips,0,0.03,0,$<$ 0.01
+S + Alpha,0.11,0.30,$<$ 0.01,OOM
+Witness ($v$$=$$0$) / MS BMapper,0,0.08,0,0.04
+Witness ($v$$=$$2$),0,\textbf{0.73},0,0
+Witness ($v$$=$$1$),0,0.65,0,0
+ShapeDiscover (v0.1),\textbf{0.74},0.51,\textbf{0.7},\textbf{0.38}

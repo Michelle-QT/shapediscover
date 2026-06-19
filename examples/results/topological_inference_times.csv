@@ -1,0 +1,5 @@
+ShapeDiscover subroutine,2-sph 5,3-sph 19,human 19,dynam 52,grid cell 15,octopus 20,digits 15,MNIST 15,C elegans 100
+Preprocessing,0.05,0.04,0.13,0.05,0.17,0.12,0.05,4.37,0.27
+Clustering,0.04,0.04,0.32,0.10,0.31,0.55,0.04,2.96,0.94
+Optimization,1.74,4.33,3.95,2.38,4.31,2.56,2.13,206.04,77.24
+Opt. w/o topology loss,1.05,1.55,1.18,0.66,1.51,0.82,0.61,50.03,19.83

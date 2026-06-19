@@ -1,0 +1,11 @@
+Algorithm, 2-sph 0.25, 2-sph 0.5,3-sph 0.25,3-sph 0.5,human 0.01,human 0.05,dynam 0.01,dynam 0.05
+S + Rips,15 \hfill 3.2e3,48 \hfill 2.1e5,44 \hfill 1.2e6,184 \hfill 1.7e9,111 \hfill 6.2e6,129 \hfill 1.1e7,257 \hfill 1.8e8,283 \hfill 2.7e8
+S + Rips + DMS,- \hfill 578,- \hfill 1.6e5,- \hfill 8.8e5,- \hfill OOM,- \hfill OOM,- \hfill OOM,- \hfill OOM,- \hfill OOM
+S + Rips + edg.coll.,15 \hfill 1.5e3,48 \hfill 1.6e5,44 \hfill 8.0e5,184 \hfill 1.5e9,111 \hfill 1.5e3,129 \hfill 2.0e3,257 \hfill 2.4e7,283 \hfill 3.5e7
+S + sparse Rips ($\epsilon$$=$$.5$),17 \hfill 3.2e3,48 \hfill 1.6e5,44 \hfill 1.2e6,- \hfill OOM,111 \hfill 4.4e5,129 \hfill 6.5e5,305 \hfill 6.2e5,283 \hfill 4.9e7
+S + sparse Rips ($\epsilon$$=$$1$),16 \hfill 970,35 \hfill 4.8e3,39 \hfill 1.0e5,- \hfill OOM,61 \hfill 1.8e4,211 \hfill 1.6e5,257 \hfill 4.2e7,297 \hfill 6.3e5
+S + Alpha,10 \hfill 83,15 \hfill 159,14 \hfill 355,34 \hfill \textbf{1.5e3},85 \hfill \textbf{1.8e3},261 \hfill 6.7e3,- \hfill OOM,- \hfill OOM
+Witness ($v$$=$$0$) / MS BMapper,15 \hfill 1.9e3,48 \hfill 2.1e5,44 \hfill 1.2e6,184 \hfill 1.7e9,46 \hfill 1.8e5,193 \hfill 5.7e7,52 \hfill 2.9e5,60 \hfill 5.2e5
+Witness ($v$$=$$2$),10 \hfill 385,10 \hfill 385,17 \hfill 9.4e3,\textbf{17} \hfill 9.4e3,51 \hfill 2.7e5,46 \hfill 1.8e5,78 \hfill 1.5e6,90 \hfill 2.7e6
+Witness ($v$$=$$1$),6 \hfill 56,6 \hfill 56,8 \hfill 218,\textbf{17} \hfill 9.4e3,26 \hfill 1.8e4,26 \hfill 1.8e4,62 \hfill 6.0e5,82 \hfill 1.8e6
+ShapeDiscover (v0.1),\textbf{5} \hfill \textbf{30},\textbf{5} \hfill \textbf{30},\textbf{7} \hfill \textbf{119},19 \hfill 1.6e4,\textbf{19} \hfill 5.0e3,\textbf{19} \hfill \textbf{5.0e3},\textbf{18} \hfill \textbf{4.0e3},\textbf{52} \hfill \textbf{2.9e5}
