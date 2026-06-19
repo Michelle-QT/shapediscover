@@ -34,6 +34,11 @@ dependencies = [
 
 [project.optional-dependencies]
 extras = ["kmapper", "ripser", "torchvision", "scikit-fuzzy"]
+test = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["shapediscover"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
