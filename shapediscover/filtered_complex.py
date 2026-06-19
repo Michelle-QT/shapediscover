@@ -17,28 +17,7 @@ class FilteredComplex:
         ]
 
 
-    def to_networkx_graph(self, threshold):
-        import networkx as nx
-
-        simplicial_complex = self.cut(threshold)
-
-        if len(simplicial_complex) >= 1:
-            vertices = simplicial_complex[0]
-        else:
-            vertices = []
-        if len(simplicial_complex) >= 2:
-            edges = simplicial_complex[1]
-        else:
-            edges = []
-
-        output_graph = nx.Graph()
-        output_graph.add_nodes_from(vertices)
-        output_graph.add_edges_from(edges)
-
-        return output_graph
-
     def to_simplex_tree(self, log_normalization=True):
-        # TODO: check for gudhi, and if not installed fail and warn user
         import gudhi
         simplex_tree = gudhi.SimplexTree()
 
