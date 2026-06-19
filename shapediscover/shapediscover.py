@@ -50,6 +50,20 @@ def _validate_pointcloud(X: np.ndarray, n_cover: int, knn: int) -> np.ndarray:
     return X
 
 
+def _cover_to_simplex_tree(cover, max_dimension, clique_complex, log_normalization):
+    """Build the gudhi simplex tree of the nerve of a fuzzy ``cover``."""
+    if clique_complex:
+        simplex_tree = fuzzy_cover_to_filtered_complex(
+            cover, max_dimension=1
+        ).to_simplex_tree(log_normalization=log_normalization)
+        simplex_tree.expansion(max_dimension + 1)
+    else:
+        simplex_tree = fuzzy_cover_to_filtered_complex(
+            cover, max_dimension=max_dimension + 1
+        ).to_simplex_tree(log_normalization=log_normalization)
+    return simplex_tree
+
+
 class ShapeDiscover:
     """Learn a fuzzy cover of a point cloud by geometric optimization.
 
@@ -393,15 +407,9 @@ class ShapeDiscover:
             raise Exception("Must fit the ShapeDiscover object.")
 
         time_start = time.time()
-        if clique_complex:
-            simplex_tree = fuzzy_cover_to_filtered_complex(
-                self.cover_, max_dimension=1
-            ).to_simplex_tree()
-            simplex_tree.expansion(max_dimension + 1)
-        else:
-            simplex_tree = fuzzy_cover_to_filtered_complex(
-                self.cover_, max_dimension=max_dimension + 1
-            ).to_simplex_tree()
+        simplex_tree = _cover_to_simplex_tree(
+            self.cover_, max_dimension, clique_complex, log_normalization=True
+        )
         time_end = time.time()
 
         self.simplex_tree_ = simplex_tree
@@ -595,15 +603,12 @@ class FuzzyCoverPersistence:
         if not np.all(np.isfinite(X)):
             raise ValueError("X must not contain NaN or infinite values.")
 
-        if self._clique_complex:
-            simplex_tree = fuzzy_cover_to_filtered_complex(
-                X, max_dimension=1
-            ).to_simplex_tree(log_normalization=self._log_rescaling)
-            simplex_tree.expansion(self._max_dimension + 1)
-        else:
-            simplex_tree = fuzzy_cover_to_filtered_complex(
-                X, max_dimension=self._max_dimension + 1
-            ).to_simplex_tree(log_normalization=self._log_rescaling)
+        simplex_tree = _cover_to_simplex_tree(
+            X,
+            self._max_dimension,
+            self._clique_complex,
+            log_normalization=self._log_rescaling,
+        )
 
         gudhi_persistence_diagram = simplex_tree.persistence()
         # persistence_diagram = [
