@@ -309,35 +309,43 @@ def plot_2d_simplicial_complex(
             ax.add_patch(circ)
 
 
-def plot_nerve(
-    cover,
-    threshold,
-    labels=None,
-    max_dimension=2,
-    max_vertex_size=1,
-    seed=0,
-    plot_letters=True,
-    dummy_legend=False,
-    interactive=False,
-    plot_name=None,
+def _compute_nerve_plot_data(
+    cover, threshold, max_dimension, labels, dummy_legend, seed
 ):
+    """Compute everything needed to draw the nerve of a thresholded fuzzy cover.
 
-    # public orientation is (n_points, n_cover); nerve_layout works internally
-    # with the (n_cover, n_points) orientation
+    ``cover`` is in the public ``(n_points, n_cover)`` orientation. Returns a
+    dict with the layout positions, the (cut) simplicial complex, the per-vertex
+    sizes / radii, the edge weights / widths, and the optional per-vertex label
+    fractions and class list.
+    """
+    # nerve_layout works internally with the (n_cover, n_points) orientation
     positions, thresholded_fuzzy_cover = nerve_layout(
         np.asarray(cover).T, threshold, seed=seed
     )
 
-    # compute higher dimensional nerve to plot higher dimensional simplices
+    # higher-dimensional nerve, to draw higher-dimensional simplices
     filtered_simplicial_complex = fuzzy_cover_to_filtered_complex(
         thresholded_fuzzy_cover, max_dimension=max_dimension
     )
-    middle_of_scale = 0.5  # used only in fuzzy cover taking binay values {0,1}
-    simplicial_complex = filtered_simplicial_complex.cut(middle_of_scale)
+    # the thresholded cover is binary {0, 1}, so cut at the midpoint
+    simplicial_complex = filtered_simplicial_complex.cut(0.5)
 
-    vertex_sizes = np.sum(thresholded_fuzzy_cover, axis=1)
-    # sqrt_sizes = np.sqrt(cover_sizes)
-    # vertex_radii = sqrt_sizes / np.max(sqrt_sizes)
+    vertex_weights = np.sum(thresholded_fuzzy_cover, axis=1)
+    n_vertices = len(vertex_weights)
+
+    _, intersection_sizes = fuzzy_cover_to_weighted_edges(
+        thresholded_fuzzy_cover, min_weight=1
+    )
+    edge_weights = np.array(intersection_sizes)
+
+    # node radius is proportional to the log of the cover-element size; edge
+    # width to the log of the intersection size (scaled by the largest radius)
+    radii = np.log(vertex_weights + 1)
+    normalized_radii = radii / np.max(radii)
+    normalized_edge_widths = np.log(edge_weights + 1) / np.max(radii)
+
+    edges = simplicial_complex[1] if len(edge_weights) > 0 else []
 
     if labels is not None:
         fractions = fuzzy_cover_with_labels_to_fractions(
@@ -354,214 +362,201 @@ def plot_nerve(
         fractions = None
         classes = None
 
-    # compute edge weights
-    at_least_one_point = 1
-    edges, intersection_sizes = fuzzy_cover_to_weighted_edges(
-        thresholded_fuzzy_cover, min_weight=at_least_one_point
+    return {
+        "positions": positions,
+        "simplicial_complex": simplicial_complex,
+        "vertex_weights": vertex_weights,
+        "n_vertices": n_vertices,
+        "edge_weights": edge_weights,
+        "normalized_radii": normalized_radii,
+        "normalized_edge_widths": normalized_edge_widths,
+        "edges": edges,
+        "fractions": fractions,
+        "classes": classes,
+    }
+
+
+def plot_nerve(
+    cover,
+    threshold,
+    labels=None,
+    max_dimension=2,
+    max_vertex_size=1,
+    seed=0,
+    plot_letters=True,
+    dummy_legend=False,
+    interactive=False,
+    plot_name=None,
+):
+    """Plot the nerve of a fuzzy ``cover`` (shape ``(n_points, n_cover)``).
+
+    With ``interactive=False`` draws a matplotlib figure and returns it; with
+    ``interactive=True`` builds an interactive pyvis network (requires the
+    ``viz`` extra and ``labels``) and returns ``None``.
+    """
+    data = _compute_nerve_plot_data(
+        cover, threshold, max_dimension, labels, dummy_legend, seed
+    )
+    if interactive:
+        _draw_nerve_interactive(data, labels)
+        return None
+    return _draw_nerve_matplotlib(data, max_vertex_size, plot_letters, plot_name)
+
+
+def _draw_nerve_matplotlib(data, max_vertex_size, plot_letters, plot_name):
+    positions = data["positions"]
+    fig = plt.figure()
+    ax = fig.gca()
+
+    plot_2d_simplicial_complex(
+        data["simplicial_complex"],
+        data["normalized_radii"] * max_vertex_size,
+        positions,
+        ax=ax,
     )
 
-    intersection_sizes = np.array(intersection_sizes)
+    if plot_letters:
+        label_offsets = [[0.05, 0] for _ in data["normalized_radii"]]
+        offsetted_positions = np.array(positions) + label_offsets
+        scatter_letters(
+            offsetted_positions,
+            [ith_letter(i) for i in range(data["n_vertices"])],
+            ax,
+        )
 
-    edge_weights = intersection_sizes
-    vertex_weights = vertex_sizes
+    # make sure everything is in the plot
+    extra_margin = 0.5
+    xmin, xmax = np.min(positions[:, 0]), np.max(positions[:, 0])
+    ymin, ymax = np.min(positions[:, 1]), np.max(positions[:, 1])
+    plt.xlim([xmin - extra_margin, xmax + extra_margin])
+    plt.ylim([ymin - extra_margin, ymax + extra_margin])
 
-    n_vertices = len(vertex_weights)
-    # radius of node is propotional to log of cover element size
-    radii = np.log(vertex_weights + 1)
-    normalized_radii = radii / np.max(radii)
+    ax.axis("equal")
+    ax.get_xaxis().set_ticks([])
+    ax.get_yaxis().set_ticks([])
+    ax.axis("off")
 
-    # width of edge is proportional to log of intersection size (scaled by *radius* of largest node)
-    edge_widths = np.log(edge_weights + 1)
-    normalized_edge_widths = edge_widths / np.max(radii)
+    if plot_name:
+        plt.savefig(plot_name + ".png", format="png", bbox_inches="tight", dpi=150)
 
-    if len(edge_weights) > 0:
-        edges = simplicial_complex[1]
+    return fig
+
+
+def _draw_nerve_interactive(data, labels):
+    try:
+        import glasbey
+        from pyvis.network import Network
+    except ImportError as e:
+        raise ImportError(
+            "Interactive nerve visualization requires pyvis and glasbey. "
+            "Install them with `pip install pyvis glasbey` (the package's 'viz' extra)."
+        ) from e
+
+    classes = data["classes"]
+    fractions = data["fractions"]
+    normalized_radii = data["normalized_radii"]
+    normalized_edge_widths = data["normalized_edge_widths"]
+    edge_weights = data["edge_weights"]
+    vertex_weights = data["vertex_weights"]
+    n_vertices = data["n_vertices"]
+
+    if -1 in labels:
+        colors = ["grey"] + glasbey.create_palette(palette_size=len(classes) - 1)
     else:
-        edges = []
+        colors = glasbey.create_palette(palette_size=len(classes))
 
-    if interactive:
-        try:
-            import glasbey
-            from pyvis.network import Network
-        except ImportError as e:
-            raise ImportError(
-                "Interactive nerve visualization requires pyvis and glasbey. "
-                "Install them with `pip install pyvis glasbey` (the package's 'viz' extra)."
-            ) from e
-
-        if -1 in labels:
-            colors = ["grey"] + glasbey.create_palette(palette_size=len(classes) - 1)
-        else:
-            colors = glasbey.create_palette(palette_size=len(classes))
-
-        def _save_piechart(frac):
-            _, ax = plt.subplots()
-            ax.pie(frac, colors=colors)
-            circ = plt.Circle(
-                [0, 0],
-                radius=1,
-                zorder=3,
-                lw=5,
-                edgecolor="Black",
-                fill=False,
-            )
-            ax.add_patch(circ)
-            ax.axis("equal")
-
-            with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
-                plt.savefig(
-                    temp_file, format="svg", transparent=True, bbox_inches="tight"
-                )
-                temp_file_path = temp_file.name
-            plt.close()
-            return temp_file_path
-
-        def _save_plot_legend(classes, colors):
-            _, ax = plt.subplots(figsize=(1, 1))
-            for color, label in zip(colors, classes):
-                ax.scatter([], [], color=color, label=label)
-            ax.legend(loc="center")
-            ax.axis("equal")
-            ax.get_xaxis().set_ticks([])
-            ax.get_yaxis().set_ticks([])
-            ax.axis("off")
-
-            with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
-                plt.savefig(
-                    temp_file, format="svg", transparent=True, bbox_inches="tight"
-                )
-                temp_file_path = temp_file.name
-            plt.close()
-            return temp_file_path
-
-        n_vertices = len(vertex_weights)
-
-        # edges must be a list of tuples of ints
-        edges = [(int(i), int(j)) for i, j in edges]
-
-        vertex_labels = [ith_letter(i) for i in range(n_vertices)]
-
-        radius_scale = 60
-        edge_width_scale = 10
-        edge_length_scale = 0.1
-        legend_scale = 60
-        edges_smooth = True
-        filter_menu = False
-        show_physics = True
-        other_buttons = False
-        plot_width = "100%"
-        plot_height = "1200px"
-        neighborhood_highlight = False
-        labelHighlightBold = False
-        masses = np.full_like(np.log(vertex_weights), 1)
-
-        radii_in_plot = radius_scale * normalized_radii
-
-        lenghts = 1 / edge_weights
-        # lenghts = np.exp(-edge_weights)
-        normalized_edge_lengths = lenghts / np.max(lenghts)
-        edge_lengths_in_plot = edge_length_scale * normalized_edge_lengths
-
-        edge_widths_in_plot = edge_width_scale * normalized_edge_widths
-
-        pyvis_network = Network(
-            height=plot_height,
-            width=plot_width,
-            filter_menu=filter_menu,
-            neighborhood_highlight=neighborhood_highlight,
-            notebook=False,
+    def _save_piechart(frac):
+        _, ax = plt.subplots()
+        ax.pie(frac, colors=colors)
+        circ = plt.Circle(
+            [0, 0], radius=1, zorder=3, lw=5, edgecolor="Black", fill=False
         )
-        # hack to hide labels: font_color="#10000000"
+        ax.add_patch(circ)
+        ax.axis("equal")
+        with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
+            plt.savefig(temp_file, format="svg", transparent=True, bbox_inches="tight")
+            temp_file_path = temp_file.name
+        plt.close()
+        return temp_file_path
 
-        pyvis_network.force_atlas_2based()
-
-        if show_physics:
-            pyvis_network.show_buttons(filter_=["physics"])
-        if other_buttons:
-            pyvis_network.show_buttons()
-
-        # if initial_positions:
-        #    for i, (label, position) in enumerate(zip(vertex_labels, initial_positions):
-        #        x = position[:, 0]
-        #        y = position[:, 1]
-        #        nt.add_node(i, x=x, y=y, label=label)
-        # else:
-        for i, (label, frac, radius, mass) in enumerate(
-            zip(vertex_labels, fractions, radii_in_plot, masses)
-        ):
-            pyvis_network.add_node(
-                i,
-                label=label,
-                shape="image",
-                image=_save_piechart(frac),
-                size=radius,
-                labelHighlightBold=labelHighlightBold,
-                mass=mass,
-            )
-
-        for edge, length, width in zip(
-            edges, edge_lengths_in_plot, edge_widths_in_plot
-        ):
-            i, j = edge
-            pyvis_network.add_edge(
-                i, j, length=length, width=width, color="black", smooth=edges_smooth
-            )
-
-        pyvis_network.add_node(
-            -1,
-            x=0,
-            y=0,
-            shape="image",
-            image=_save_plot_legend(classes, colors),
-            size=legend_scale,
-            physics=False,
-        )
-
-        pyvis_network.show("visualizations/pyvis_test.html", notebook=False)
-    else:
-        fig = plt.figure()
-        ax = fig.gca()
-
-        plot_2d_simplicial_complex(
-            simplicial_complex, normalized_radii * max_vertex_size, positions, ax=ax
-        )
-
-        if plot_letters:
-            # cover_element_lable_offsets = [[-0.03, -0.03] for radius in normalized_radii]
-            # cover_element_lable_offsets = [[-0.08, -0.08] for radius in normalized_radii]
-            cover_element_lable_offsets = [[0 + 0.05, 0] for radius in normalized_radii]
-            # draw vertex labels
-            offsetted_positions = np.array(positions) + cover_element_lable_offsets
-            scatter_letters(
-                offsetted_positions,
-                [ith_letter(i) for i in range(n_vertices)],
-                ax,
-            )
-
-        # make sure everything is in the plot
-        extra_margin = 0.5
-        xmin_plot = np.min(positions[:, 0])
-        xmax_plot = np.max(positions[:, 0])
-        ymin_plot = np.min(positions[:, 1])
-        ymax_plot = np.max(positions[:, 1])
-        plt.xlim([xmin_plot - extra_margin, xmax_plot + extra_margin])
-        plt.ylim([ymin_plot - extra_margin, ymax_plot + extra_margin])
-
+    def _save_plot_legend(classes, colors):
+        _, ax = plt.subplots(figsize=(1, 1))
+        for color, label in zip(colors, classes):
+            ax.scatter([], [], color=color, label=label)
+        ax.legend(loc="center")
         ax.axis("equal")
         ax.get_xaxis().set_ticks([])
         ax.get_yaxis().set_ticks([])
         ax.axis("off")
+        with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
+            plt.savefig(temp_file, format="svg", transparent=True, bbox_inches="tight")
+            temp_file_path = temp_file.name
+        plt.close()
+        return temp_file_path
 
-        if plot_name:
-            plt.savefig(
-                plot_name + ".png",
-                format="png",
-                bbox_inches="tight",
-                dpi=150,
-            )
+    # edges must be a list of tuples of ints
+    edges = [(int(i), int(j)) for i, j in data["edges"]]
+    vertex_labels = [ith_letter(i) for i in range(n_vertices)]
 
-        return fig
+    radius_scale = 60
+    edge_width_scale = 10
+    edge_length_scale = 0.1
+    legend_scale = 60
+    edges_smooth = True
+    show_physics = True
+    other_buttons = False
+    masses = np.full_like(np.log(vertex_weights), 1)
 
+    radii_in_plot = radius_scale * normalized_radii
+
+    lengths = 1 / edge_weights
+    normalized_edge_lengths = lengths / np.max(lengths)
+    edge_lengths_in_plot = edge_length_scale * normalized_edge_lengths
+    edge_widths_in_plot = edge_width_scale * normalized_edge_widths
+
+    pyvis_network = Network(
+        height="1200px",
+        width="100%",
+        filter_menu=False,
+        neighborhood_highlight=False,
+        notebook=False,
+    )
+    pyvis_network.force_atlas_2based()
+    if show_physics:
+        pyvis_network.show_buttons(filter_=["physics"])
+    if other_buttons:
+        pyvis_network.show_buttons()
+
+    for i, (label, frac, radius, mass) in enumerate(
+        zip(vertex_labels, fractions, radii_in_plot, masses)
+    ):
+        pyvis_network.add_node(
+            i,
+            label=label,
+            shape="image",
+            image=_save_piechart(frac),
+            size=radius,
+            labelHighlightBold=False,
+            mass=mass,
+        )
+
+    for edge, length, width in zip(edges, edge_lengths_in_plot, edge_widths_in_plot):
+        i, j = edge
+        pyvis_network.add_edge(
+            i, j, length=length, width=width, color="black", smooth=edges_smooth
+        )
+
+    pyvis_network.add_node(
+        -1,
+        x=0,
+        y=0,
+        shape="image",
+        image=_save_plot_legend(classes, colors),
+        size=legend_scale,
+        physics=False,
+    )
+
+    pyvis_network.show("visualizations/pyvis_test.html", notebook=False)
 
 def plot_persistence_barcode(persistence_diagram, plot_name=None):
     fig = plt.figure(figsize=(8, 2))
