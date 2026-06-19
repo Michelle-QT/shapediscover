@@ -36,6 +36,9 @@ nn = ["torch_geometric"]
 extras = ["kmapper", "ripser", "torchvision", "scikit-fuzzy", "pandas"]
 test = ["pytest"]
 
+[tool.setuptools.dynamic]
+version = { attr = "shapediscover._version.__version__" }
+
 [tool.setuptools.packages.find]
 include = ["shapediscover"]
 
