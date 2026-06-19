@@ -272,11 +272,16 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             next_seed(),
         )
 
-        last_pfuzzy_cover = simplex_to_psimplex(partition_of_unity(), p=self.simplex_p)
+        # the final cover is an output, not part of any backward pass, so do not
+        # build an autograd graph for it
+        with torch.no_grad():
+            last_pfuzzy_cover = simplex_to_psimplex(
+                partition_of_unity(), p=self.simplex_p
+            )
+            output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
         # stored in the public (n_points, n_cover) orientation
-        self.precover_ = last_pfuzzy_cover.detach().numpy().T
-        output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
-        self.cover_ = output_cover.detach().numpy().T
+        self.precover_ = last_pfuzzy_cover.numpy().T
+        self.cover_ = output_cover.numpy().T
 
         return self
 
