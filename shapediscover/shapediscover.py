@@ -222,8 +222,75 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
 
         X = _validate_pointcloud(X, self.n_cover, self.knn)
 
-        # resolve defaults that depend on other parameters (kept out of
-        # __init__ so the constructor stores its arguments verbatim)
+        (
+            loss_weights,
+            loss_probabilities,
+            n_eigenfunctions,
+            inner_layer_widths,
+            optimization_algorithm,
+        ) = self._resolve_fit_parameters()
+
+        # a single master RNG drives every stochastic step (graph construction,
+        # clustering init, torch model init, stochastic loss sampling); a fixed
+        # random_state therefore gives reproducible runs, and nothing mutates
+        # global numpy / torch random state beyond the local torch seeding below
+        rng = np.random.default_rng(self.random_state)
+
+        def next_seed():
+            return int(rng.integers(0, np.iinfo(np.int32).max))
+
+        torch.manual_seed(next_seed())
+        if self.verbose:
+            print("pointcloud shape:", X.shape)
+
+        graph = self._build_neighborhood_graph(X, next_seed())
+        self.graph_ = graph
+        n_points = graph.n_vertices()
+
+        clustering, laplacian_eigenmaps = self._initialize_precover(
+            X, graph, n_eigenfunctions, next_seed
+        )
+
+        partition_of_unity = self._build_model(
+            X,
+            graph,
+            n_points,
+            clustering,
+            laplacian_eigenmaps,
+            n_eigenfunctions,
+            inner_layer_widths,
+            rng,
+            next_seed,
+        )
+        self.model_ = partition_of_unity
+
+        self._pretrain_on_initialization(
+            partition_of_unity, clustering, n_points, optimization_algorithm
+        )
+
+        self._optimize(
+            partition_of_unity,
+            graph,
+            loss_weights,
+            loss_probabilities,
+            optimization_algorithm,
+            next_seed(),
+        )
+
+        last_pfuzzy_cover = simplex_to_psimplex(partition_of_unity(), p=self.simplex_p)
+        # stored in the public (n_points, n_cover) orientation
+        self.precover_ = last_pfuzzy_cover.detach().numpy().T
+        output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
+        self.cover_ = output_cover.detach().numpy().T
+
+        return self
+
+    def _resolve_fit_parameters(self):
+        """Resolve parameter defaults that depend on other parameters.
+
+        Kept out of ``__init__`` so the constructor stores its arguments
+        verbatim (scikit-learn convention).
+        """
         loss_weights = self.loss_weights
         if loss_weights is None:
             loss_weights = [1, 10, 1, 10]
@@ -233,77 +300,80 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         )
         inner_layer_widths = self.inner_layer_widths
         optimization_algorithm = "adam"
+        return (
+            loss_weights,
+            loss_probabilities,
+            n_eigenfunctions,
+            inner_layer_widths,
+            optimization_algorithm,
+        )
 
-        # a single master RNG drives every stochastic step (graph construction,
-        # clustering init, torch model init, stochastic loss sampling); a fixed
-        # random_state therefore gives reproducible runs, and nothing mutates
-        # global numpy / torch random state beyond the local torch seeding below
-        rng = np.random.default_rng(self.random_state)
-
-        def _next_seed():
-            return int(rng.integers(0, np.iinfo(np.int32).max))
-
-        torch.manual_seed(_next_seed())
-
-        if self.verbose:
-            print("pointcloud shape:", X.shape)
-
-        # 0. Preprocessing: knn graph
+    def _build_neighborhood_graph(self, X, seed):
+        """Build the neighborhood graph of the point cloud ``X``."""
         time_start = time.time()
         graph = graph_from_pointcloud(
             X,
             n_neighbors=self.knn,
             algorithm=self.graph_algorithm,
-            random_state=_next_seed(),
+            random_state=seed,
         )
-        laplacian_eigenmaps = None
-        self.graph_ = graph
-        time_end = time.time()
         if self.verbose:
-            print("time create graph", time_end - time_start)
+            print("time create graph", time.time() - time_start)
+        return graph
 
-        n_points = graph.n_vertices()
+    def _initialize_precover(self, X, graph, n_eigenfunctions, next_seed):
+        """Compute the clustering that initializes the optimization.
 
-        if self.n_saved_iterations > 0:
-            save_output_at_iterations = list(
-                range(0, self.n_max_iter, int(self.n_max_iter / self.n_saved_iterations))
+        Returns ``(clustering, laplacian_eigenmaps)``, both ``None`` for the
+        "random" initialization; ``clustering`` is ``(n_cover, n_points)``.
+        """
+        if self.initialization_algorithm == "random":
+            return None, None
+
+        time_start = time.time()
+        laplacian_eigenmaps = None
+        if self.initialization_algorithm == "kmeans":
+            clustering = fuzzy_cover_from_kmeans(
+                X, n_clusters=self.n_cover, random_state=next_seed()
+            )
+        elif self.initialization_algorithm == "spectral_clustering":
+            laplacian_eigenmaps = graph.laplacian_eigenfunctions(
+                n_eigenfunctions, random_state=next_seed()
+            )
+            clustering = fuzzy_cover_from_kmeans(
+                laplacian_eigenmaps,
+                n_clusters=self.n_cover,
+                random_state=next_seed(),
+            )
+        elif self.initialization_algorithm == "spectral_fuzzy_clustering":
+            laplacian_eigenmaps = graph.laplacian_eigenfunctions(
+                n_eigenfunctions, random_state=next_seed()
+            )
+            clustering = fuzzy_cover_from_fuzzycmeans(
+                laplacian_eigenmaps,
+                n_clusters=self.n_cover,
+                random_state=next_seed(),
             )
 
-        # 1. Compute initialization
-        if self.initialization_algorithm != "random":
-            time_start = time.time()
-            if self.initialization_algorithm == "kmeans":
-                clustering = fuzzy_cover_from_kmeans(
-                    X, n_clusters=self.n_cover, random_state=_next_seed()
-                )
-            elif self.initialization_algorithm == "spectral_clustering":
-                if laplacian_eigenmaps is None:
-                    laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        n_eigenfunctions, random_state=_next_seed()
-                    )
-                clustering = fuzzy_cover_from_kmeans(
-                    laplacian_eigenmaps,
-                    n_clusters=self.n_cover,
-                    random_state=_next_seed(),
-                )
-            elif self.initialization_algorithm == "spectral_fuzzy_clustering":
-                if laplacian_eigenmaps is None:
-                    laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        n_eigenfunctions, random_state=_next_seed()
-                    )
-                clustering = fuzzy_cover_from_fuzzycmeans(
-                    laplacian_eigenmaps,
-                    n_clusters=self.n_cover,
-                    random_state=_next_seed(),
-                )
+        # stored in the public (n_points, n_cover) orientation
+        self.initialization_precover_ = clustering.T
+        if self.verbose:
+            print("time clustering", time.time() - time_start)
+        return clustering, laplacian_eigenmaps
 
-            # stored in the public (n_points, n_cover) orientation
-            self.initialization_precover_ = clustering.T
-            time_end = time.time()
-            if self.verbose:
-                print("time clustering", time_end - time_start)
-
-        # 2. Construct optimizable partition of unity
+    def _build_model(
+        self,
+        X,
+        graph,
+        n_points,
+        clustering,
+        laplacian_eigenmaps,
+        n_eigenfunctions,
+        inner_layer_widths,
+        rng,
+        next_seed,
+    ):
+        """Construct the optimizable partition of unity for the chosen model."""
         if self.model == "set_function":
             if self.initialization_algorithm == "random":
                 vector_valued_function = SetFunction(
@@ -327,82 +397,89 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
                 inner_layer_widths = [self.n_cover for _ in range(n_inner_layers)]
             if laplacian_eigenmaps is None:
                 laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                    n_eigenfunctions, random_state=_next_seed()
+                    n_eigenfunctions, random_state=next_seed()
                 )
-            node_features = laplacian_eigenmaps
             vector_valued_function = GraphFunction(
                 graph,
-                node_features,
+                laplacian_eigenmaps,
                 self.n_cover,
                 inner_layer_widths=inner_layer_widths,
             )
-        partition_of_unity = PartitionOfUnity(vector_valued_function)
-        self.model_ = partition_of_unity
+        return PartitionOfUnity(vector_valued_function)
 
-        # 3. Initialize model on initialization
-        if self.initialization_algorithm != "random" and self.model != "set_function":
-            time_start = time.time()
-
-            if optimization_algorithm == "adam":
-                optimizer_initialization = torch.optim.Adam(
-                    partition_of_unity.parameters(), lr=self.learning_rate
-                )
-            else:
-                optimizer_initialization = torch.optim.SGD(
-                    partition_of_unity.parameters(), lr=self.learning_rate
-                )
-
-            if self.early_stop:
-                early_stopper = GradientEarlyStopper(
-                    partition_of_unity, self.early_stop_tolerance
-                )
-
-            initialization_losses = []
-
-            initialization_target = torch.tensor(
-                clustering,
-                dtype=torch.float32,
-                requires_grad=False,
-            )
-
-            for iteration_number in range(self.n_max_iter):
-                loss = torch.sum(
-                    (partition_of_unity() - initialization_target) ** 2
-                ) / (self.n_cover * n_points)
-                initialization_losses.append([iteration_number, loss.detach().numpy()])
-                optimizer_initialization.zero_grad()
-                loss.backward()
-                optimizer_initialization.step()
-
-                if self.early_stop and early_stopper.early_stop():
-                    break
-
-            initialization_losses = np.array(initialization_losses)
-            self.initialization_losses_ = initialization_losses
-
-            time_end = time.time()
-            if self.verbose:
-                print("time initialization", time_end - time_start)
-            if self.plot_loss_curve:
-                plot_losses([initialization_losses], ["initialization loss"])
-
-        # 4. Train model to minimize main loss function
+    def _make_optimizer(self, partition_of_unity, optimization_algorithm):
         if optimization_algorithm == "adam":
-            optimizer = torch.optim.Adam(
+            return torch.optim.Adam(
                 partition_of_unity.parameters(), lr=self.learning_rate
             )
-        else:
-            optimizer = torch.optim.SGD(
-                partition_of_unity.parameters(), lr=self.learning_rate
-            )
+        return torch.optim.SGD(partition_of_unity.parameters(), lr=self.learning_rate)
 
-        loss_function = FuzzyCoverLossFunction(
-            graph, loss_weights, loss_probabilities, log=True, random_state=_next_seed()
+    def _pretrain_on_initialization(
+        self, partition_of_unity, clustering, n_points, optimization_algorithm
+    ):
+        """Pre-train a neural-network model to match the clustering init.
+
+        No-op for the ``set_function`` model (initialized directly) and for the
+        "random" initialization.
+        """
+        if self.initialization_algorithm == "random" or self.model == "set_function":
+            return
+
+        time_start = time.time()
+        optimizer_initialization = self._make_optimizer(
+            partition_of_unity, optimization_algorithm
         )
-
         if self.early_stop:
             early_stopper = GradientEarlyStopper(
                 partition_of_unity, self.early_stop_tolerance
+            )
+
+        initialization_losses = []
+        initialization_target = torch.tensor(
+            clustering, dtype=torch.float32, requires_grad=False
+        )
+
+        for iteration_number in range(self.n_max_iter):
+            loss = torch.sum((partition_of_unity() - initialization_target) ** 2) / (
+                self.n_cover * n_points
+            )
+            initialization_losses.append([iteration_number, loss.detach().numpy()])
+            optimizer_initialization.zero_grad()
+            loss.backward()
+            optimizer_initialization.step()
+
+            if self.early_stop and early_stopper.early_stop():
+                break
+
+        self.initialization_losses_ = np.array(initialization_losses)
+        if self.verbose:
+            print("time initialization", time.time() - time_start)
+        if self.plot_loss_curve:
+            plot_losses([self.initialization_losses_], ["initialization loss"])
+
+    def _optimize(
+        self,
+        partition_of_unity,
+        graph,
+        loss_weights,
+        loss_probabilities,
+        optimization_algorithm,
+        loss_seed,
+    ):
+        """Run the main optimization minimizing the fuzzy-cover loss."""
+        optimizer = self._make_optimizer(partition_of_unity, optimization_algorithm)
+        loss_function = FuzzyCoverLossFunction(
+            graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed
+        )
+        if self.early_stop:
+            early_stopper = GradientEarlyStopper(
+                partition_of_unity, self.early_stop_tolerance
+            )
+
+        save_output_at_iterations = []
+        if self.n_saved_iterations > 0:
+            save_output_at_iterations = list(
+                range(0, self.n_max_iter, int(self.n_max_iter / self.n_saved_iterations))
             )
 
         historical_outputs = []
@@ -424,23 +501,15 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
 
             if self.early_stop and early_stopper.early_stop():
                 break
-        main_optimization_losses = loss_function._historical_losses
-        self.main_optimization_losses_ = main_optimization_losses
-        loss_names = loss_function.loss_names
-        self.loss_names_ = loss_names
-        time_end = time.time()
+
+        self.main_optimization_losses_ = loss_function._historical_losses
+        self.loss_names_ = loss_function.loss_names
         if self.verbose:
-            print("time optimization", time_end - time_start)
+            print("time optimization", time.time() - time_start)
         if self.plot_loss_curve:
-            plot_losses(main_optimization_losses, loss_names, from_onwards=0)
-
-        last_pfuzzy_cover = simplex_to_psimplex(partition_of_unity(), p=self.simplex_p)
-        # stored in the public (n_points, n_cover) orientation
-        self.precover_ = last_pfuzzy_cover.detach().numpy().T
-        output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
-        self.cover_ = output_cover.detach().numpy().T
-
-        return self
+            plot_losses(
+                self.main_optimization_losses_, self.loss_names_, from_onwards=0
+            )
 
     def transform(self, X=None, y=None) -> np.ndarray:
         """Return the learned fuzzy cover, of shape ``(n_points, n_cover)``.
