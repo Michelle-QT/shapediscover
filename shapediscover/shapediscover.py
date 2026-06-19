@@ -18,24 +18,94 @@ from .weighted_graph import graph_from_pointcloud
 from .shapediscover_plot import plot_losses
 
 
+def _validate_pointcloud(X: np.ndarray, n_cover: int, knn: int) -> np.ndarray:
+    """Validate and coerce a point cloud ``X`` before fitting.
+
+    Returns ``X`` as a 2D ``numpy`` array, raising ``ValueError`` on an empty,
+    non-2D, or non-finite input, or when ``n_cover`` / ``knn`` are inconsistent
+    with the number of points.
+    """
+    X = np.asarray(X)
+    if X.ndim != 2:
+        raise ValueError(
+            f"X must be a 2D array of shape (n_samples, n_features); got ndim={X.ndim}."
+        )
+    n_samples = X.shape[0]
+    if n_samples == 0:
+        raise ValueError("X must contain at least one point.")
+    if not np.all(np.isfinite(X)):
+        raise ValueError("X must not contain NaN or infinite values.")
+    if n_cover < 1:
+        raise ValueError(f"n_cover must be a positive integer; got {n_cover}.")
+    if knn < 1:
+        raise ValueError(f"knn must be a positive integer; got {knn}.")
+    if n_samples < n_cover:
+        raise ValueError(
+            f"n_cover ({n_cover}) cannot exceed the number of points ({n_samples})."
+        )
+    if n_samples <= knn:
+        raise ValueError(
+            f"knn ({knn}) must be smaller than the number of points ({n_samples})."
+        )
+    return X
+
+
 class ShapeDiscover:
+    """Learn a fuzzy cover of a point cloud by geometric optimization.
+
+    This is the full, lower-level interface; see ``ShapeDiscoverLite`` for the
+    recommended high-level one. Call ``fit`` to learn the cover, then
+    ``fit_persistence`` to compute the persistent homology of its nerve.
+
+    Parameters
+    ----------
+    n_cover : int
+        Number of cover elements to learn.
+    knn : int
+        Number of nearest neighbors for the knn graph.
+    loss_weights : list of float
+        Weights of the [measure, geometry, topology, regularization] losses.
+    graph_algorithm : str
+        Algorithm used to build the neighborhood graph (e.g. "umap").
+    initialization_algorithm : str
+        One of "random", "kmeans", "spectral_clustering", or
+        "spectral_fuzzy_clustering".
+    model : str
+        One of "set_function", "pointcloud_nn", or "graph_nn".
+    simplex_p : int
+        Exponent of the p-simplex parametrization.
+    inner_layer_widths : list of int or None
+        Hidden-layer widths for the neural-network models.
+    n_eigenfunctions : int or None
+        Number of Laplacian eigenfunctions for spectral init / graph features
+        (defaults to ``n_cover``).
+    learning_rate : float
+        Optimizer learning rate.
+    n_max_iter : int
+        Maximum number of optimization iterations.
+    early_stop : bool
+        Whether to stop early once the gradient norm is small.
+    early_stop_tolerance : float
+        Gradient-norm tolerance for early stopping.
+    """
+
     def __init__(
         self,
-        n_cover=10,
-        knn=15,
-        loss_weights=[1, 10, 1, 10],
-        graph_algorithm="umap",
+        n_cover: int = 10,
+        knn: int = 15,
+        loss_weights: list[float] = [1, 10, 1, 10],
+        graph_algorithm: str = "umap",
         # either random, kmeans, spectral_clustering, or spectral_fuzzy_clustering
-        initialization_algorithm="spectral_clustering",
+        initialization_algorithm: str = "spectral_clustering",
         # either set_function, pointcloud_nn, or graph_nn
-        model="set_function",
-        simplex_p=5,
-        inner_layer_widths=None,
-        n_eigenfunctions=None,
-        learning_rate=1e-1,
-        n_max_iter=250,
-        early_stop=True,
-        early_stop_tolerance=1e-4,
+        model: str = "set_function",
+        simplex_p: int = 5,
+        inner_layer_widths: list[int] | None = None,
+        n_eigenfunctions: int | None = None,
+        learning_rate: float = 1e-1,
+        n_max_iter: int = 250,
+        early_stop: bool = True,
+        early_stop_tolerance: float = 1e-4,
     ):
         if initialization_algorithm not in [
             "random",
@@ -85,15 +155,29 @@ class ShapeDiscover:
 
     def fit(
         self,
-        X,
+        X: np.ndarray,
         y=None,
         # TODO: the following parameters should go to __init__
-        n_saved_iterations=0,
-        verbose=True,
-        plot_loss_curve=True,
+        n_saved_iterations: int = 0,
+        verbose: bool = True,
+        plot_loss_curve: bool = True,
         # TODO: use random_state and numpyu.random.RandomState object
-        seed=0,
-    ):
+        seed: int = 0,
+    ) -> None:
+        """Learn the fuzzy cover of the point cloud ``X``.
+
+        After fitting, the learned cover is available as ``self.cover_`` (with the
+        intermediate ``precover_``, ``graph_``, ... attributes also populated).
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Point cloud in Euclidean space.
+        y : Ignored
+            Present for API consistency.
+        """
+
+        X = _validate_pointcloud(X, self._n_cover, self._knn)
 
         torch.manual_seed(seed)
 
@@ -281,7 +365,27 @@ class ShapeDiscover:
         output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
         self.cover_ = output_cover.detach().numpy()
 
-    def fit_persistence(self, max_dimension=1, clique_complex=False, verbose=True):
+    def fit_persistence(
+        self,
+        max_dimension: int = 1,
+        clique_complex: bool = False,
+        verbose: bool = True,
+    ) -> None:
+        """Compute the persistent homology of the learned cover's nerve.
+
+        Must be called after ``fit``. Populates ``self.simplex_tree_``,
+        ``self.persistence_diagram_`` (a list of birth/death arrays, one per
+        homological dimension), and ``self.gudhi_persistence_diagram_``.
+
+        Parameters
+        ----------
+        max_dimension : int
+            Highest homological dimension to compute.
+        clique_complex : bool
+            If True, build the nerve as a clique (flag) complex.
+        """
+        if max_dimension < 0:
+            raise ValueError(f"max_dimension must be non-negative; got {max_dimension}.")
         if self.cover_ is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
@@ -383,14 +487,18 @@ class ShapeDiscoverLite:
 
     def __init__(
         self,
-        n_cover=10,
-        knn=15,
-        regularization=10,
-        optimization=True,
-        n_max_iter=500,
-        early_stop_tolerance=1e-5,
-        fuzzy_clustering=False,
+        n_cover: int = 10,
+        knn: int = 15,
+        regularization: float = 10,
+        optimization: bool = True,
+        n_max_iter: int = 500,
+        early_stop_tolerance: float = 1e-5,
+        fuzzy_clustering: bool = False,
     ):
+        if regularization < 0:
+            raise ValueError(
+                f"regularization must be non-negative; got {regularization}."
+            )
         n_max_iter = n_max_iter if optimization else 0
         initialization_algorithm = (
             "spectral_clustering"
@@ -406,7 +514,7 @@ class ShapeDiscoverLite:
             early_stop_tolerance=early_stop_tolerance,
         )
 
-    def fit_transform(self, X, y=None):
+    def fit_transform(self, X: np.ndarray, y=None) -> np.ndarray:
         """
         Fits model to the input data and returns the fuzzy cover.
 
@@ -427,19 +535,63 @@ class ShapeDiscoverLite:
 
 
 class FuzzyCoverPersistence:
+    """Persistent homology of the nerve of a fuzzy cover.
+
+    Transforms a fuzzy cover (as returned by ``ShapeDiscoverLite.fit_transform``
+    or ``ShapeDiscover.cover_``) into the persistence diagram of its nerve.
+
+    Parameters
+    ----------
+    max_dimension : int
+        Highest homological dimension to compute.
+    log_rescaling : bool
+        If True, rescale the filtration logarithmically.
+    clique_complex : bool
+        If True, build the nerve as a clique (flag) complex.
+    verbose : bool
+        Unused placeholder kept for API consistency.
+    """
+
     def __init__(
         self,
-        max_dimension=1,
-        log_rescaling=False,
-        clique_complex=False,
-        verbose=False,
+        max_dimension: int = 1,
+        log_rescaling: bool = False,
+        clique_complex: bool = False,
+        verbose: bool = False,
     ):
+        if max_dimension < 0:
+            raise ValueError(f"max_dimension must be non-negative; got {max_dimension}.")
         self._max_dimension = max_dimension
         self._verbose = verbose
         self._clique_complex = clique_complex
         self._log_rescaling = log_rescaling
 
-    def fit_transform(self, X, y=None):
+    def fit_transform(self, X: np.ndarray, y=None) -> list:
+        """Compute the persistence diagram of the nerve of the fuzzy cover ``X``.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_cover_elements, n_points)
+            A fuzzy cover (each row a cover-membership function over the points).
+        y : Ignored
+            Present for API consistency.
+
+        Returns
+        -------
+        persistence : list of (int, (float, float))
+            The gudhi persistence diagram: ``(dimension, (birth, death))`` pairs.
+        """
+        X = np.asarray(X)
+        if X.ndim != 2:
+            raise ValueError(
+                "X must be a 2D fuzzy cover of shape (n_cover_elements, n_points); "
+                f"got ndim={X.ndim}."
+            )
+        if X.shape[0] == 0:
+            raise ValueError("X must have at least one cover element.")
+        if not np.all(np.isfinite(X)):
+            raise ValueError("X must not contain NaN or infinite values.")
+
         if self._clique_complex:
             simplex_tree = fuzzy_cover_to_filtered_complex(
                 X, max_dimension=1
