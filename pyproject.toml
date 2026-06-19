@@ -22,18 +22,18 @@ dependencies = [
     "scikit-learn",
     "torch",
     "umap-learn",
-    "glasbey",
-    "networkx",
-    "pyvis",
-    "torch_geometric",
-    "pandas",
     "gudhi",
     "fufpy",
 ]
 
 
 [project.optional-dependencies]
-extras = ["kmapper", "ripser", "torchvision", "scikit-fuzzy"]
+# nerve visualization (plot_nerve, interactive layout)
+viz = ["pyvis", "glasbey", "networkx"]
+# the optional graph-neural-network model (model="graph_nn")
+nn = ["torch_geometric"]
+# libraries used by some of the example notebooks
+extras = ["kmapper", "ripser", "torchvision", "scikit-fuzzy", "pandas"]
 test = ["pytest"]
 
 [tool.setuptools.packages.find]

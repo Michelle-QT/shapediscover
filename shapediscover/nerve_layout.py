@@ -1,7 +1,6 @@
 import warnings
 import scipy as sp
 import numpy as np
-import networkx as nx
 from sklearn.manifold import MDS
 
 from .fuzzy_cover import (
@@ -11,6 +10,14 @@ from .fuzzy_cover import (
 
 
 def nerve_layout(fuzzy_cover, threshold, method=None, seed=0):
+    try:
+        import networkx as nx
+    except ImportError as e:
+        raise ImportError(
+            "Nerve layout/visualization requires networkx. Install it with "
+            "`pip install networkx` (the package's 'viz' extra)."
+        ) from e
+
     # turn fuzzy cover to cover
     thresholded_fuzzy_cover, non_zero_indices = threshold_fuzzy_cover(
         fuzzy_cover, threshold

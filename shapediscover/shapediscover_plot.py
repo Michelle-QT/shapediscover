@@ -3,9 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import itertools
 import gudhi
-import glasbey
 from sklearn.preprocessing import LabelEncoder
-from pyvis.network import Network
 
 from .fuzzy_cover import (
     fuzzy_cover_to_filtered_complex,
@@ -374,6 +372,15 @@ def plot_nerve(
         edges = []
 
     if interactive:
+        try:
+            import glasbey
+            from pyvis.network import Network
+        except ImportError as e:
+            raise ImportError(
+                "Interactive nerve visualization requires pyvis and glasbey. "
+                "Install them with `pip install pyvis glasbey` (the package's 'viz' extra)."
+            ) from e
+
         if -1 in labels:
             colors = ["grey"] + glasbey.create_palette(palette_size=len(classes) - 1)
         else:

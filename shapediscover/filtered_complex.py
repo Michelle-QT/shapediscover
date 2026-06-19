@@ -1,5 +1,4 @@
 import numpy as np
-import networkx as nx
 
 
 class FilteredComplex:
@@ -19,6 +18,8 @@ class FilteredComplex:
 
 
     def to_networkx_graph(self, threshold):
+        import networkx as nx
+
         simplicial_complex = self.cut(threshold)
 
         if len(simplicial_complex) >= 1:

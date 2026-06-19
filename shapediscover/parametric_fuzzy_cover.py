@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch_geometric
-import torch_geometric.nn as gnn
 import numpy as np
 
 
@@ -59,6 +57,15 @@ class PointCloudFunction(torch.nn.Module):
 class GraphFunction(nn.Module):
     def __init__(self, graph, node_attributes, n_dimensions, inner_layer_widths):
         super().__init__()
+
+        try:
+            import torch_geometric
+            import torch_geometric.nn as gnn
+        except ImportError as e:
+            raise ImportError(
+                "The 'graph_nn' model requires torch_geometric. Install it with "
+                "`pip install torch_geometric` (the package's 'nn' extra)."
+            ) from e
 
         edge_indices, edge_attributes = torch_geometric.utils.from_scipy_sparse_matrix(
             graph.adjacency_matrix()
