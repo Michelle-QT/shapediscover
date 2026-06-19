@@ -21,6 +21,20 @@ from .weighted_graph import graph_from_pointcloud
 from .shapediscover_plot import plot_losses
 
 
+def _check_2d_finite(X: np.ndarray, shape_desc: str) -> np.ndarray:
+    """Coerce ``X`` to a 2D finite numpy array, raising ``ValueError`` otherwise.
+
+    ``shape_desc`` describes the expected array for the error message (e.g.
+    ``"array of shape (n_samples, n_features)"``).
+    """
+    X = np.asarray(X)
+    if X.ndim != 2:
+        raise ValueError(f"X must be a 2D {shape_desc}; got ndim={X.ndim}.")
+    if not np.all(np.isfinite(X)):
+        raise ValueError("X must not contain NaN or infinite values.")
+    return X
+
+
 def _validate_pointcloud(X: np.ndarray, n_cover: int, knn: int) -> np.ndarray:
     """Validate and coerce a point cloud ``X`` before fitting.
 
@@ -28,16 +42,10 @@ def _validate_pointcloud(X: np.ndarray, n_cover: int, knn: int) -> np.ndarray:
     non-2D, or non-finite input, or when ``n_cover`` / ``knn`` are inconsistent
     with the number of points.
     """
-    X = np.asarray(X)
-    if X.ndim != 2:
-        raise ValueError(
-            f"X must be a 2D array of shape (n_samples, n_features); got ndim={X.ndim}."
-        )
+    X = _check_2d_finite(X, "array of shape (n_samples, n_features)")
     n_samples = X.shape[0]
     if n_samples == 0:
         raise ValueError("X must contain at least one point.")
-    if not np.all(np.isfinite(X)):
-        raise ValueError("X must not contain NaN or infinite values.")
     if n_cover < 1:
         raise ValueError(f"n_cover must be a positive integer; got {n_cover}.")
     if knn < 1:
@@ -769,16 +777,9 @@ class FuzzyCoverPersistence(TransformerMixin, BaseEstimator):
             raise ValueError(
                 f"max_dimension must be non-negative; got {self.max_dimension}."
             )
-        X = np.asarray(X)
-        if X.ndim != 2:
-            raise ValueError(
-                "X must be a 2D fuzzy cover of shape (n_points, n_cover_elements); "
-                f"got ndim={X.ndim}."
-            )
+        X = _check_2d_finite(X, "fuzzy cover of shape (n_points, n_cover_elements)")
         if X.shape[1] == 0:
             raise ValueError("X must have at least one cover element.")
-        if not np.all(np.isfinite(X)):
-            raise ValueError("X must not contain NaN or infinite values.")
 
         # X is (n_points, n_cover); the nerve construction expects the internal
         # (n_cover, n_points) orientation.
