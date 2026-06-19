@@ -93,7 +93,7 @@ class ShapeDiscover:
         self,
         n_cover: int = 10,
         knn: int = 15,
-        loss_weights: list[float] = [1, 10, 1, 10],
+        loss_weights: list[float] | None = None,
         graph_algorithm: str = "umap",
         # either random, kmeans, spectral_clustering, or spectral_fuzzy_clustering
         initialization_algorithm: str = "spectral_clustering",
@@ -118,6 +118,9 @@ class ShapeDiscover:
             )
         if model not in ["set_function", "pointcloud_nn", "graph_nn"]:
             raise Exception("Model not recognized", model)
+
+        if loss_weights is None:
+            loss_weights = [1, 10, 1, 10]
 
         self._n_cover = n_cover
         self._knn = knn

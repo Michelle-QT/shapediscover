@@ -15,14 +15,18 @@ class FuzzyCoverLossFunction:
     def __init__(
         self,
         graph,
-        weights=[1.0, 1.0, 1.0, 1.0],
-        probabilities=[1.0, 1.0, 1.0, 1.0],
+        weights=None,
+        probabilities=None,
         log=False,
         seed=None,
     ):
         np.random.seed(seed)
 
         number_of_losses = 4
+        if weights is None:
+            weights = [1.0, 1.0, 1.0, 1.0]
+        if probabilities is None:
+            probabilities = [1.0, 1.0, 1.0, 1.0]
 
         assert len(weights) == number_of_losses
         assert len(probabilities) == number_of_losses

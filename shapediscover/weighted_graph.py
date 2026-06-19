@@ -179,7 +179,7 @@ class WeightedGraph:
 
             order = np.argsort(eigenvalues)[0:k]
             return eigenvectors[:, order]
-        except:
+        except Exception:
             warn(
                 "Spectral initialisation failed! The eigenvector solver\n"
                 "failed. This is likely due to too small an eigengap. Consider\n"
