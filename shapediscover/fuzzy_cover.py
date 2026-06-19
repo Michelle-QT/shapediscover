@@ -41,65 +41,20 @@ class FuzzyCoverLossFunction:
         coboundary_matrix_scipy, edge_weights_numpy = (
             graph.coboundary_matrix_and_edge_weights()
         )
-        coboundary_matrix = scipy_sparse_matrix_to_torch_sparse(
+        self._coboundary_matrix = scipy_sparse_matrix_to_torch_sparse(
             coboundary_matrix_scipy
         ).to(torch.float32)
-        edge_weights = torch.tensor(edge_weights_numpy, requires_grad=False).to(
+        self._edge_weights = torch.tensor(edge_weights_numpy, requires_grad=False).to(
             torch.float32
         )
-        total_edge_weight = np.sum(edge_weights_numpy)
-        adjacency_list = graph.efficient_adjacency_list()
-
-        def measure_loss(pou):
-            n_pou_functions = pou.shape[0]
-            n_points = pou.shape[1]
-            return torch.sum(torch.pow(torch.sum(pou, axis=1), 2)) / (
-                n_pou_functions * n_points**2
-            )
-
-        def geometry_loss_function(pou):
-            n_pou_functions = pou.shape[0]
-            loss = torch.sum(
-                torch.pow(
-                    torch.norm((pou @ coboundary_matrix.T) * edge_weights, p=1, dim=1),
-                    2,
-                )
-            ) / (total_edge_weight**2 * n_pou_functions)
-            return loss
-
-        def topology_loss_function(pou, persistence_threshold=0.1):
-            n_pou_functions = pou.shape[0]
-            n_points = pou.shape[1]
-            loss_conn = torch.tensor(0.0)
-
-            for j in range(n_pou_functions):
-
-                clusters_to_shrink, cluster_deaths = persistence_based_flattening(
-                    adjacency_list,
-                    pou[j].detach().numpy(),
-                    threshold=persistence_threshold,
-                )
-
-                this_loss = torch.tensor(0.0)
-                for cluster, death in zip(clusters_to_shrink, cluster_deaths):
-                    this_loss += torch.sum(torch.pow(pou[j][cluster] - death, 2))
-
-                loss_conn += this_loss / n_points
-
-            return loss_conn / n_pou_functions
-
-        def regularization_loss_function(pou):
-            n_pou_functions = pou.shape[0]
-            loss = torch.sum(torch.pow(pou @ coboundary_matrix.T, 2) * edge_weights) / (
-                total_edge_weight * n_pou_functions
-            )
-            return loss
+        self._total_edge_weight = np.sum(edge_weights_numpy)
+        self._adjacency_list = graph.efficient_adjacency_list()
 
         self._initialized_losses = [
-            measure_loss,
-            geometry_loss_function,
-            topology_loss_function,
-            regularization_loss_function,
+            self._measure_loss,
+            self._geometry_loss,
+            self._topology_loss,
+            self._regularization_loss,
         ]
 
         self.loss_names = [
@@ -135,6 +90,50 @@ class FuzzyCoverLossFunction:
             )
 
         return total_loss
+
+    def _measure_loss(self, pou):
+        n_pou_functions = pou.shape[0]
+        n_points = pou.shape[1]
+        return torch.sum(torch.pow(torch.sum(pou, axis=1), 2)) / (
+            n_pou_functions * n_points**2
+        )
+
+    def _geometry_loss(self, pou):
+        n_pou_functions = pou.shape[0]
+        return torch.sum(
+            torch.pow(
+                torch.norm(
+                    (pou @ self._coboundary_matrix.T) * self._edge_weights, p=1, dim=1
+                ),
+                2,
+            )
+        ) / (self._total_edge_weight**2 * n_pou_functions)
+
+    def _topology_loss(self, pou, persistence_threshold=0.1):
+        n_pou_functions = pou.shape[0]
+        n_points = pou.shape[1]
+        loss_conn = torch.tensor(0.0)
+
+        for j in range(n_pou_functions):
+            clusters_to_shrink, cluster_deaths = persistence_based_flattening(
+                self._adjacency_list,
+                pou[j].detach().numpy(),
+                threshold=persistence_threshold,
+            )
+
+            this_loss = torch.tensor(0.0)
+            for cluster, death in zip(clusters_to_shrink, cluster_deaths):
+                this_loss += torch.sum(torch.pow(pou[j][cluster] - death, 2))
+
+            loss_conn += this_loss / n_points
+
+        return loss_conn / n_pou_functions
+
+    def _regularization_loss(self, pou):
+        n_pou_functions = pou.shape[0]
+        return torch.sum(
+            torch.pow(pou @ self._coboundary_matrix.T, 2) * self._edge_weights
+        ) / (self._total_edge_weight * n_pou_functions)
 
 
 def simplex_to_psimplex_numpy(functions, p=2):
@@ -203,8 +202,6 @@ def fuzzy_cover_from_kmeans(pointcloud, n_clusters, random_state=None):
     clusterer = KMeans(n_clusters=n_clusters, n_init="auto", random_state=random_state)
     clustering_labels = np.array(clusterer.fit_predict(pointcloud)).reshape(-1, 1)
 
-    # print(np.sort(np.unique(clusterer.labels_, return_counts=True)[1]))
-
     encoder = OneHotEncoder(sparse_output=False)
     clustering_as_function_to_simplex = encoder.fit_transform(clustering_labels).T
 
@@ -228,10 +225,19 @@ def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, random_state=None):
 
 
 def standard_intersection(phi1, phi2):
+    """Max-min fuzzy intersection of two membership functions.
+
+    An alternative ``weighing_function`` for ``fuzzy_cover_to_weighted_edges``;
+    the default there is ``volume_intersection``.
+    """
     return np.max(np.minimum(phi1, phi2))
 
 
 def volume_intersection(phi1, phi2):
+    """L1 (volume) fuzzy intersection of two membership functions.
+
+    The default ``weighing_function`` for ``fuzzy_cover_to_weighted_edges``.
+    """
     return np.linalg.norm(np.minimum(phi1, phi2), ord=1)
 
 
@@ -253,15 +259,8 @@ def fuzzy_cover_to_weighted_edges(
     weights = np.array(
         [weighing_function(functions[i], functions[j]) for i, j in all_possible_edges]
     )
-    # weighted_edges = [
-    #    (i, j, weighing_function(functions[i], functions[j]))
-    #    for i in range(n_cover_elements)
-    #    for j in range(i + 1, n_cover_elements)
-    # ]
     edges = all_possible_edges[weights > min_weight]
     weights = weights[weights > min_weight]
-
-    # print("intersection sizes", weighted_edges)
 
     return edges, weights
 

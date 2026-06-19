@@ -49,20 +49,9 @@ def persistence_based_flattening(adjacency_list, vertex_filtration, threshold):
         if i != current_max:
             cluster_as_list_of_lists = np.argwhere(clusters == i)
             cluster_points = cluster_as_list_of_lists.flatten()
-            ## debug
-            #print(cluster_points)
             res_clust.append(cluster_points)
             res_deaths.append(deaths[i])
-        # debug
-        #else:
-        #    cluster_as_list_of_lists = np.argwhere(clusters == i)
-        #    cluster_points = cluster_as_list_of_lists.flatten()
-        #    #print(cluster_points)
-            
-    ## debug
-    #print("number of clusters", len(res_clust))
-    #for cl in res_clust:
-    #   print(len(cl))
+
     return res_clust, res_deaths
 
 
