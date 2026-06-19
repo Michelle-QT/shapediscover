@@ -122,8 +122,10 @@ def test_correct_homology_quotient_discover(
             loss_weights=loss_weights,
             early_stop_tolerance=early_stop_tolerance,
             model=model,
+            verbose=False,
+            plot_loss_curve=False,
         )
-        discover.fit(X, verbose=False, plot_loss_curve=False)
+        discover.fit(X)
         discover.fit_persistence(max_homological_dimension, verbose=False)
         correct_quotient = correct_homology_quotient(
             discover.persistence_diagram_, target_betti_numbers
@@ -523,8 +525,10 @@ def get_correct_homology_quotient_all(
             n_cover,
             knn=knn,
             loss_weights=loss_weights,
+            verbose=True,
+            plot_loss_curve=False,
         )
-        discover.fit(X, verbose=True, plot_loss_curve=False)
+        discover.fit(X)
 
         discover.fit_persistence(max_homological_dimension, verbose=False)
         correct_quotient_shapediscover = correct_homology_quotient(

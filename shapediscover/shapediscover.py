@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import time
 
+from sklearn.base import BaseEstimator, TransformerMixin
+
 from .parametric_fuzzy_cover import (
     PointCloudFunction,
     SetFunction,
@@ -51,7 +53,10 @@ def _validate_pointcloud(X: np.ndarray, n_cover: int, knn: int) -> np.ndarray:
 
 
 def _cover_to_simplex_tree(cover, max_dimension, clique_complex, log_normalization):
-    """Build the gudhi simplex tree of the nerve of a fuzzy ``cover``."""
+    """Build the gudhi simplex tree of the nerve of a fuzzy ``cover``.
+
+    ``cover`` is in the internal orientation ``(n_cover_elements, n_points)``.
+    """
     if clique_complex:
         simplex_tree = fuzzy_cover_to_filtered_complex(
             cover, max_dimension=1
@@ -64,12 +69,14 @@ def _cover_to_simplex_tree(cover, max_dimension, clique_complex, log_normalizati
     return simplex_tree
 
 
-class ShapeDiscover:
+class ShapeDiscover(TransformerMixin, BaseEstimator):
     """Learn a fuzzy cover of a point cloud by geometric optimization.
 
     This is the full, lower-level interface; see ``ShapeDiscoverLite`` for the
-    recommended high-level one. Call ``fit`` to learn the cover, then
-    ``fit_persistence`` to compute the persistent homology of its nerve.
+    recommended high-level one. It follows the scikit-learn estimator API: call
+    ``fit`` to learn the cover, ``transform`` (or ``fit_transform``) to retrieve
+    it as an array of shape ``(n_points, n_cover)``, and ``fit_persistence`` to
+    compute the persistent homology of its nerve.
 
     Parameters
     ----------
@@ -77,8 +84,9 @@ class ShapeDiscover:
         Number of cover elements to learn.
     knn : int
         Number of nearest neighbors for the knn graph.
-    loss_weights : list of float
+    loss_weights : list of float or None
         Weights of the [measure, geometry, topology, regularization] losses.
+        ``None`` uses ``[1, 10, 1, 10]``.
     graph_algorithm : str
         Algorithm used to build the neighborhood graph (e.g. "umap").
     initialization_algorithm : str
@@ -101,6 +109,25 @@ class ShapeDiscover:
         Whether to stop early once the gradient norm is small.
     early_stop_tolerance : float
         Gradient-norm tolerance for early stopping.
+    n_saved_iterations : int
+        Number of intermediate covers to snapshot into ``historical_outputs_``
+        during fitting (0 disables snapshotting).
+    verbose : bool
+        Whether to print timing information while fitting.
+    plot_loss_curve : bool
+        Whether to plot the loss curves while fitting.
+    seed : int
+        Random seed for initialization and optimization.
+
+    Attributes
+    ----------
+    cover_ : ndarray of shape (n_points, n_cover)
+        The learned fuzzy cover (one column per cover element), available after
+        ``fit``.
+    precover_ : ndarray of shape (n_points, n_cover)
+        The learned cover before the final p=inf normalization.
+    initialization_precover_ : ndarray of shape (n_points, n_cover)
+        The clustering used to initialize the optimization.
     """
 
     def __init__(
@@ -120,42 +147,37 @@ class ShapeDiscover:
         n_max_iter: int = 250,
         early_stop: bool = True,
         early_stop_tolerance: float = 1e-4,
+        n_saved_iterations: int = 0,
+        verbose: bool = True,
+        plot_loss_curve: bool = True,
+        # TODO: use random_state and a numpy.random.Generator object
+        seed: int = 0,
     ):
-        if initialization_algorithm not in [
-            "random",
-            "kmeans",
-            "spectral_clustering",
-            "spectral_fuzzy_clustering",
-        ]:
-            raise Exception(
-                "Initialization method not recognized", initialization_algorithm
-            )
-        if model not in ["set_function", "pointcloud_nn", "graph_nn"]:
-            raise Exception("Model not recognized", model)
+        # scikit-learn convention: __init__ only stores the constructor
+        # arguments verbatim (no validation or transformation), so that
+        # get_params / set_params / clone work. Validation and the derivation
+        # of defaults happen in fit.
+        self.n_cover = n_cover
+        self.knn = knn
+        self.loss_weights = loss_weights
+        self.graph_algorithm = graph_algorithm
+        self.initialization_algorithm = initialization_algorithm
+        self.model = model
+        self.simplex_p = simplex_p
+        self.inner_layer_widths = inner_layer_widths
+        self.n_eigenfunctions = n_eigenfunctions
+        self.learning_rate = learning_rate
+        self.n_max_iter = n_max_iter
+        self.early_stop = early_stop
+        self.early_stop_tolerance = early_stop_tolerance
+        self.n_saved_iterations = n_saved_iterations
+        self.verbose = verbose
+        self.plot_loss_curve = plot_loss_curve
+        self.seed = seed
 
-        if loss_weights is None:
-            loss_weights = [1, 10, 1, 10]
-
-        self._n_cover = n_cover
-        self._knn = knn
-        self._loss_weights = loss_weights
-        self._loss_probabilities = [1, 1, 1, 1]
-        self._graph_algorithm = graph_algorithm
-        self._initialization_algorithm = initialization_algorithm
-        self._model = model
-        self._simplex_p = simplex_p
-
-        self._inner_layer_widths = inner_layer_widths
-        if not n_eigenfunctions:
-            n_eigenfunctions = n_cover
-        self._n_eigenfunctions = n_eigenfunctions
-
-        self._optimization_algorithm = "adam"
-        self._learning_rate = learning_rate
-        self._n_max_iter = n_max_iter
-        self._early_stop = early_stop
-        self._early_stop_tolerance = early_stop_tolerance
-
+        # Fitted attributes (populated by fit / fit_persistence). They are set
+        # to None up front so the "is None" checks below and in the plotting
+        # helpers can detect an unfitted estimator.
         self.graph_ = None
         self.initialization_precover_ = None
         self.model_ = None
@@ -170,21 +192,12 @@ class ShapeDiscover:
         self.persistence_diagram_ = None
         self.gudhi_persistence_diagram_ = None
 
-    def fit(
-        self,
-        X: np.ndarray,
-        y=None,
-        # TODO: the following parameters should go to __init__
-        n_saved_iterations: int = 0,
-        verbose: bool = True,
-        plot_loss_curve: bool = True,
-        # TODO: use random_state and numpyu.random.RandomState object
-        seed: int = 0,
-    ) -> None:
+    def fit(self, X: np.ndarray, y=None) -> "ShapeDiscover":
         """Learn the fuzzy cover of the point cloud ``X``.
 
-        After fitting, the learned cover is available as ``self.cover_`` (with the
-        intermediate ``precover_``, ``graph_``, ... attributes also populated).
+        After fitting, the learned cover is available as ``self.cover_`` (shape
+        ``(n_points, n_cover)``), with the intermediate ``precover_``,
+        ``graph_``, ... attributes also populated. Returns ``self``.
 
         Parameters
         ----------
@@ -193,111 +206,132 @@ class ShapeDiscover:
         y : Ignored
             Present for API consistency.
         """
+        if self.initialization_algorithm not in [
+            "random",
+            "kmeans",
+            "spectral_clustering",
+            "spectral_fuzzy_clustering",
+        ]:
+            raise ValueError(
+                "Initialization method not recognized: "
+                f"{self.initialization_algorithm!r}."
+            )
+        if self.model not in ["set_function", "pointcloud_nn", "graph_nn"]:
+            raise ValueError(f"Model not recognized: {self.model!r}.")
 
-        X = _validate_pointcloud(X, self._n_cover, self._knn)
+        X = _validate_pointcloud(X, self.n_cover, self.knn)
 
-        torch.manual_seed(seed)
+        # resolve defaults that depend on other parameters (kept out of
+        # __init__ so the constructor stores its arguments verbatim)
+        loss_weights = self.loss_weights
+        if loss_weights is None:
+            loss_weights = [1, 10, 1, 10]
+        loss_probabilities = [1, 1, 1, 1]
+        n_eigenfunctions = (
+            self.n_eigenfunctions if self.n_eigenfunctions is not None else self.n_cover
+        )
+        inner_layer_widths = self.inner_layer_widths
+        optimization_algorithm = "adam"
 
-        if verbose:
+        torch.manual_seed(self.seed)
+
+        if self.verbose:
             print("pointcloud shape:", X.shape)
 
         # 0. Preprocessing: knn graph
         time_start = time.time()
         graph = graph_from_pointcloud(
-            X, n_neighbors=self._knn, algorithm=self._graph_algorithm
+            X, n_neighbors=self.knn, algorithm=self.graph_algorithm
         )
         laplacian_eigenmaps = None
         self.graph_ = graph
         time_end = time.time()
-        if verbose:
+        if self.verbose:
             print("time create graph", time_end - time_start)
 
         n_points = graph.n_vertices()
 
-        if n_saved_iterations > 0:
+        if self.n_saved_iterations > 0:
             save_output_at_iterations = list(
-                range(0, self._n_max_iter, int(self._n_max_iter / n_saved_iterations))
+                range(0, self.n_max_iter, int(self.n_max_iter / self.n_saved_iterations))
             )
 
         # 1. Compute initialization
-        if self._initialization_algorithm != "random":
+        if self.initialization_algorithm != "random":
             time_start = time.time()
-            if self._initialization_algorithm == "kmeans":
+            if self.initialization_algorithm == "kmeans":
                 clustering = fuzzy_cover_from_kmeans(
-                    X, n_clusters=self._n_cover, seed=seed
+                    X, n_clusters=self.n_cover, seed=self.seed
                 )
-            elif self._initialization_algorithm == "spectral_clustering":
-                if not laplacian_eigenmaps:
+            elif self.initialization_algorithm == "spectral_clustering":
+                if laplacian_eigenmaps is None:
                     laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        self._n_eigenfunctions
+                        n_eigenfunctions
                     )
                 clustering = fuzzy_cover_from_kmeans(
-                    laplacian_eigenmaps, n_clusters=self._n_cover, seed=seed
+                    laplacian_eigenmaps, n_clusters=self.n_cover, seed=self.seed
                 )
-            elif self._initialization_algorithm == "spectral_fuzzy_clustering":
-                if not laplacian_eigenmaps:
+            elif self.initialization_algorithm == "spectral_fuzzy_clustering":
+                if laplacian_eigenmaps is None:
                     laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                        self._n_eigenfunctions
+                        n_eigenfunctions
                     )
                 clustering = fuzzy_cover_from_fuzzycmeans(
-                    laplacian_eigenmaps, n_clusters=self._n_cover, seed=seed
+                    laplacian_eigenmaps, n_clusters=self.n_cover, seed=self.seed
                 )
 
-            self.initialization_precover_ = clustering
+            # stored in the public (n_points, n_cover) orientation
+            self.initialization_precover_ = clustering.T
             time_end = time.time()
-            if verbose:
+            if self.verbose:
                 print("time clustering", time_end - time_start)
 
         # 2. Construct optimizable partition of unity
-        if self._model == "set_function":
-            if self._initialization_algorithm == "random":
-                vector_valued_function = SetFunction(n_points, self._n_cover)
+        if self.model == "set_function":
+            if self.initialization_algorithm == "random":
+                vector_valued_function = SetFunction(n_points, self.n_cover)
             else:
                 vector_valued_function = SetFunction(
-                    n_points, self._n_cover, initialization=clustering
+                    n_points, self.n_cover, initialization=clustering
                 )
-        elif self._model == "pointcloud_nn":
-            if not self._inner_layer_widths:
-                self._inner_layer_widths = [self._n_cover]
+        elif self.model == "pointcloud_nn":
+            if not inner_layer_widths:
+                inner_layer_widths = [self.n_cover]
             vector_valued_function = PointCloudFunction(
-                X, self._n_cover, inner_layer_widths=self._inner_layer_widths
+                X, self.n_cover, inner_layer_widths=inner_layer_widths
             )
-        elif self._model == "graph_nn":
-            if not self._inner_layer_widths:
+        elif self.model == "graph_nn":
+            if not inner_layer_widths:
                 n_inner_layers = 2
-                self._inner_layer_widths = [
-                    self._n_cover for _ in range(n_inner_layers)
-                ]
-            if not laplacian_eigenmaps:
-                laplacian_eigenmaps = graph.laplacian_eigenfunctions(
-                    self._n_eigenfunctions
-                )
+                inner_layer_widths = [self.n_cover for _ in range(n_inner_layers)]
+            if laplacian_eigenmaps is None:
+                laplacian_eigenmaps = graph.laplacian_eigenfunctions(n_eigenfunctions)
             node_features = laplacian_eigenmaps
             vector_valued_function = GraphFunction(
                 graph,
                 node_features,
-                self._n_cover,
-                inner_layer_widths=self._inner_layer_widths,
+                self.n_cover,
+                inner_layer_widths=inner_layer_widths,
             )
         partition_of_unity = PartitionOfUnity(vector_valued_function)
         self.model_ = partition_of_unity
 
         # 3. Initialize model on initialization
-        if self._initialization_algorithm != "random" and self._model != "set_function":
+        if self.initialization_algorithm != "random" and self.model != "set_function":
             time_start = time.time()
 
-            if self._optimization_algorithm == "adam":
+            if optimization_algorithm == "adam":
                 optimizer_initialization = torch.optim.Adam(
-                    partition_of_unity.parameters(), lr=self._learning_rate
+                    partition_of_unity.parameters(), lr=self.learning_rate
                 )
             else:
                 optimizer_initialization = torch.optim.SGD(
-                    partition_of_unity.parameters(), lr=self._learning_rate
+                    partition_of_unity.parameters(), lr=self.learning_rate
                 )
 
-            if self._early_stop:
+            if self.early_stop:
                 early_stopper = GradientEarlyStopper(
-                    partition_of_unity, self._early_stop_tolerance
+                    partition_of_unity, self.early_stop_tolerance
                 )
 
             initialization_losses = []
@@ -308,79 +342,93 @@ class ShapeDiscover:
                 requires_grad=False,
             )
 
-            for iteration_number in range(self._n_max_iter):
+            for iteration_number in range(self.n_max_iter):
                 loss = torch.sum(
                     (partition_of_unity() - initialization_target) ** 2
-                ) / (self._n_cover * n_points)
+                ) / (self.n_cover * n_points)
                 initialization_losses.append([iteration_number, loss.detach().numpy()])
                 optimizer_initialization.zero_grad()
                 loss.backward()
                 optimizer_initialization.step()
 
-                if self._early_stop and early_stopper.early_stop():
+                if self.early_stop and early_stopper.early_stop():
                     break
 
             initialization_losses = np.array(initialization_losses)
             self.initialization_losses_ = initialization_losses
 
             time_end = time.time()
-            if verbose:
+            if self.verbose:
                 print("time initialization", time_end - time_start)
-            if plot_loss_curve:
+            if self.plot_loss_curve:
                 plot_losses([initialization_losses], ["initialization loss"])
 
         # 4. Train model to minimize main loss function
-        if self._optimization_algorithm == "adam":
+        if optimization_algorithm == "adam":
             optimizer = torch.optim.Adam(
-                partition_of_unity.parameters(), lr=self._learning_rate
+                partition_of_unity.parameters(), lr=self.learning_rate
             )
         else:
             optimizer = torch.optim.SGD(
-                partition_of_unity.parameters(), lr=self._learning_rate
+                partition_of_unity.parameters(), lr=self.learning_rate
             )
 
         loss_function = FuzzyCoverLossFunction(
-            graph, self._loss_weights, self._loss_probabilities, log=True, seed=seed
+            graph, loss_weights, loss_probabilities, log=True, seed=self.seed
         )
 
-        if self._early_stop:
+        if self.early_stop:
             early_stopper = GradientEarlyStopper(
-                partition_of_unity, self._early_stop_tolerance
+                partition_of_unity, self.early_stop_tolerance
             )
 
         historical_outputs = []
         self.historical_outputs_ = historical_outputs
 
         time_start = time.time()
-        for iteration_number in range(self._n_max_iter):
+        for iteration_number in range(self.n_max_iter):
             current_pfuzzy_cover = simplex_to_psimplex(
-                partition_of_unity(), p=self._simplex_p
+                partition_of_unity(), p=self.simplex_p
             )
             loss = loss_function(current_pfuzzy_cover, iteration_number)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            if n_saved_iterations > 0:
+            if self.n_saved_iterations > 0:
                 if iteration_number in save_output_at_iterations:
                     historical_outputs.append(current_pfuzzy_cover.detach().numpy())
 
-            if self._early_stop and early_stopper.early_stop():
+            if self.early_stop and early_stopper.early_stop():
                 break
         main_optimization_losses = loss_function._historical_losses
         self.main_optimization_losses_ = main_optimization_losses
         loss_names = loss_function.loss_names
         self.loss_names_ = loss_names
         time_end = time.time()
-        if verbose:
+        if self.verbose:
             print("time optimization", time_end - time_start)
-        if plot_loss_curve:
+        if self.plot_loss_curve:
             plot_losses(main_optimization_losses, loss_names, from_onwards=0)
 
-        last_pfuzzy_cover = simplex_to_psimplex(partition_of_unity(), p=self._simplex_p)
-        self.precover_ = last_pfuzzy_cover.detach().numpy()
+        last_pfuzzy_cover = simplex_to_psimplex(partition_of_unity(), p=self.simplex_p)
+        # stored in the public (n_points, n_cover) orientation
+        self.precover_ = last_pfuzzy_cover.detach().numpy().T
         output_cover = simplex_to_psimplex(last_pfuzzy_cover, p=float("inf"))
-        self.cover_ = output_cover.detach().numpy()
+        self.cover_ = output_cover.detach().numpy().T
+
+        return self
+
+    def transform(self, X=None, y=None) -> np.ndarray:
+        """Return the learned fuzzy cover, of shape ``(n_points, n_cover)``.
+
+        The cover is tied to the point cloud passed to ``fit`` (the default
+        ``set_function`` model has no out-of-sample mapping), so ``X`` is
+        ignored and present only for scikit-learn API consistency.
+        """
+        if getattr(self, "cover_", None) is None:
+            raise Exception("Must fit the ShapeDiscover object before transform.")
+        return self.cover_
 
     def fit_persistence(
         self,
@@ -407,8 +455,10 @@ class ShapeDiscover:
             raise Exception("Must fit the ShapeDiscover object.")
 
         time_start = time.time()
+        # cover_ is (n_points, n_cover); the nerve construction expects the
+        # internal (n_cover, n_points) orientation.
         simplex_tree = _cover_to_simplex_tree(
-            self.cover_, max_dimension, clique_complex, log_normalization=True
+            self.cover_.T, max_dimension, clique_complex, log_normalization=True
         )
         time_end = time.time()
 
@@ -426,8 +476,6 @@ class ShapeDiscover:
         time_end = time.time()
         if verbose:
             print("time compute persistence", time_end - time_start)
-
-        # return self.persistence_diagram_
 
 
 class GradientEarlyStopper:
@@ -463,10 +511,12 @@ def simplex_to_psimplex(functions, p=2):
     return functions / torch.norm(functions, p=p, dim=0)
 
 
-class ShapeDiscoverLite:
-    """
+class ShapeDiscoverLite(TransformerMixin, BaseEstimator):
+    """Build a fuzzy cover of a point cloud X using geometric optimization.
 
-    Build a fuzzy cover of a point cloud X using geometric optimization.
+    This is the recommended high-level interface. It follows the scikit-learn
+    estimator API: ``fit`` learns the cover, ``transform`` / ``fit_transform``
+    return it as an array of shape ``(n_points, n_cover)``.
 
     Parameters
     ----------
@@ -490,6 +540,11 @@ class ShapeDiscoverLite:
         Whether to use fuzzy clustering initialization (default is False).
         Should be kept as is unless you know what you are doing.
 
+    Attributes
+    ----------
+    cover_ : ndarray of shape (n_points, n_cover)
+        The learned fuzzy cover, available after ``fit``.
+
     Methods
     -------
     fit_transform(X, y=None)
@@ -506,50 +561,66 @@ class ShapeDiscoverLite:
         early_stop_tolerance: float = 1e-5,
         fuzzy_clustering: bool = False,
     ):
-        if regularization < 0:
-            raise ValueError(
-                f"regularization must be non-negative; got {regularization}."
-            )
-        n_max_iter = n_max_iter if optimization else 0
-        initialization_algorithm = (
-            "spectral_clustering"
-            if not fuzzy_clustering
-            else "spectral_fuzzy_clustering"
-        )
-        self._discover = ShapeDiscover(
-            n_cover=n_cover,
-            knn=knn,
-            loss_weights=[1, 0, 0, regularization],
-            initialization_algorithm=initialization_algorithm,
-            n_max_iter=n_max_iter,
-            early_stop_tolerance=early_stop_tolerance,
-        )
+        self.n_cover = n_cover
+        self.knn = knn
+        self.regularization = regularization
+        self.optimization = optimization
+        self.n_max_iter = n_max_iter
+        self.early_stop_tolerance = early_stop_tolerance
+        self.fuzzy_clustering = fuzzy_clustering
 
-    def fit_transform(self, X: np.ndarray, y=None) -> np.ndarray:
-        """
-        Fits model to the input data and returns the fuzzy cover.
+        self.cover_ = None
+
+    def fit(self, X: np.ndarray, y=None) -> "ShapeDiscoverLite":
+        """Fit the model to the input data ``X``. Returns ``self``.
 
         Parameters
         ----------
         X : array-like of shape (n_samples, n_features)
-            Array of points in Euclidean space of dimension n.
+            Array of points in Euclidean space.
         y : Ignored, optional
             Not used, present for API consistency by convention.
-
-        Returns
-        -------
-        cover : ndarray
-            The output fuzzy cover.
         """
-        self._discover.fit(X, verbose=False, plot_loss_curve=False)
-        return self._discover.cover_
+        if self.regularization < 0:
+            raise ValueError(
+                f"regularization must be non-negative; got {self.regularization}."
+            )
+        n_max_iter = self.n_max_iter if self.optimization else 0
+        initialization_algorithm = (
+            "spectral_clustering"
+            if not self.fuzzy_clustering
+            else "spectral_fuzzy_clustering"
+        )
+        self._discover = ShapeDiscover(
+            n_cover=self.n_cover,
+            knn=self.knn,
+            loss_weights=[1, 0, 0, self.regularization],
+            initialization_algorithm=initialization_algorithm,
+            n_max_iter=n_max_iter,
+            early_stop_tolerance=self.early_stop_tolerance,
+            verbose=False,
+            plot_loss_curve=False,
+        )
+        self._discover.fit(X)
+        self.cover_ = self._discover.cover_
+        return self
+
+    def transform(self, X=None, y=None) -> np.ndarray:
+        """Return the learned fuzzy cover, of shape ``(n_points, n_cover)``.
+
+        The cover is tied to the point cloud passed to ``fit``, so ``X`` is
+        ignored and present only for scikit-learn API consistency.
+        """
+        if getattr(self, "cover_", None) is None:
+            raise Exception("Must fit the ShapeDiscoverLite object before transform.")
+        return self.cover_
 
 
-class FuzzyCoverPersistence:
+class FuzzyCoverPersistence(TransformerMixin, BaseEstimator):
     """Persistent homology of the nerve of a fuzzy cover.
 
     Transforms a fuzzy cover (as returned by ``ShapeDiscoverLite.fit_transform``
-    or ``ShapeDiscover.cover_``) into the persistence diagram of its nerve.
+    or ``ShapeDiscover.transform``) into the persistence diagram of its nerve.
 
     Parameters
     ----------
@@ -570,20 +641,23 @@ class FuzzyCoverPersistence:
         clique_complex: bool = False,
         verbose: bool = False,
     ):
-        if max_dimension < 0:
-            raise ValueError(f"max_dimension must be non-negative; got {max_dimension}.")
-        self._max_dimension = max_dimension
-        self._verbose = verbose
-        self._clique_complex = clique_complex
-        self._log_rescaling = log_rescaling
+        self.max_dimension = max_dimension
+        self.log_rescaling = log_rescaling
+        self.clique_complex = clique_complex
+        self.verbose = verbose
 
-    def fit_transform(self, X: np.ndarray, y=None) -> list:
+    def fit(self, X: np.ndarray, y=None) -> "FuzzyCoverPersistence":
+        """No-op fit, present for scikit-learn API consistency. Returns ``self``."""
+        return self
+
+    def transform(self, X: np.ndarray, y=None) -> list:
         """Compute the persistence diagram of the nerve of the fuzzy cover ``X``.
 
         Parameters
         ----------
-        X : ndarray of shape (n_cover_elements, n_points)
-            A fuzzy cover (each row a cover-membership function over the points).
+        X : ndarray of shape (n_points, n_cover_elements)
+            A fuzzy cover (each column a cover-membership function over the
+            points).
         y : Ignored
             Present for API consistency.
 
@@ -592,28 +666,28 @@ class FuzzyCoverPersistence:
         persistence : list of (int, (float, float))
             The gudhi persistence diagram: ``(dimension, (birth, death))`` pairs.
         """
+        if self.max_dimension < 0:
+            raise ValueError(
+                f"max_dimension must be non-negative; got {self.max_dimension}."
+            )
         X = np.asarray(X)
         if X.ndim != 2:
             raise ValueError(
-                "X must be a 2D fuzzy cover of shape (n_cover_elements, n_points); "
+                "X must be a 2D fuzzy cover of shape (n_points, n_cover_elements); "
                 f"got ndim={X.ndim}."
             )
-        if X.shape[0] == 0:
+        if X.shape[1] == 0:
             raise ValueError("X must have at least one cover element.")
         if not np.all(np.isfinite(X)):
             raise ValueError("X must not contain NaN or infinite values.")
 
+        # X is (n_points, n_cover); the nerve construction expects the internal
+        # (n_cover, n_points) orientation.
         simplex_tree = _cover_to_simplex_tree(
-            X,
-            self._max_dimension,
-            self._clique_complex,
-            log_normalization=self._log_rescaling,
+            X.T,
+            self.max_dimension,
+            self.clique_complex,
+            log_normalization=self.log_rescaling,
         )
 
-        gudhi_persistence_diagram = simplex_tree.persistence()
-        # persistence_diagram = [
-        #    np.array(simplex_tree.persistence_intervals_in_dimension(i))
-        #    for i in range(self._max_dimension + 1)
-        # ]
-
-        return gudhi_persistence_diagram
+        return simplex_tree.persistence()

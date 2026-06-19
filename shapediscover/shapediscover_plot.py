@@ -97,8 +97,10 @@ def shapediscover_plot(
         if shapediscover.cover_ is None:
             raise Exception("Must fit the ShapeDiscover object.")
 
+        # cover_ is (n_points, n_cover); threshold_fuzzy_cover works on the
+        # internal (n_cover, n_points) orientation, so transpose back for plotting
         thresholded_fuzzy_cover = threshold_fuzzy_cover(
-            shapediscover.cover_, cover_threshold
+            shapediscover.cover_.T, cover_threshold
         )[0]
 
         if plot_name:
@@ -107,7 +109,7 @@ def shapediscover_plot(
             plot_name_cover = None
         plot_pointcloud_with_function(
             X,
-            thresholded_fuzzy_cover,
+            thresholded_fuzzy_cover.T,
             point_size=point_size,
             figsize=figsize,
             enumerate_plots=True,
@@ -186,6 +188,8 @@ def plot_pointcloud_with_function(
     enumerate_plots=False,
     plot_name=None,
 ):
+    # public orientation is (n_points, n_cover); plot one panel per cover element
+    covers = np.asarray(covers).T
     figsize = (10, 6)
     n_cover_elements = covers.shape[0]
     max_per_row = 6
@@ -318,7 +322,11 @@ def plot_nerve(
     plot_name=None,
 ):
 
-    positions, thresholded_fuzzy_cover = nerve_layout(cover, threshold, seed=seed)
+    # public orientation is (n_points, n_cover); nerve_layout works internally
+    # with the (n_cover, n_points) orientation
+    positions, thresholded_fuzzy_cover = nerve_layout(
+        np.asarray(cover).T, threshold, seed=seed
+    )
 
     # compute higher dimensional nerve to plot higher dimensional simplices
     filtered_simplicial_complex = fuzzy_cover_to_filtered_complex(
