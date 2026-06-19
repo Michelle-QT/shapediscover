@@ -22,3 +22,15 @@ def test_graph_from_pointcloud_knn_provides_adjacency_list():
     flat, start_end = graph.efficient_adjacency_list()
     assert start_end.shape == (40, 2)
     assert flat.shape[0] == 40 * 5
+
+
+def test_graph_from_pointcloud_has_no_self_edges():
+    # the normalized Laplacian assumes no self-loops; graph_from_pointcloud
+    # checks the adjacency matrix has a zero diagonal
+    points = np.linspace(0.0, 1.0, 40).reshape(-1, 1)
+    for algorithm in ("knn", "umap"):
+        graph = graph_from_pointcloud(
+            points, n_neighbors=5, algorithm=algorithm, random_state=0
+        )
+        diagonal = sps.csr_matrix(graph.adjacency_matrix()).diagonal()
+        assert not diagonal.any()

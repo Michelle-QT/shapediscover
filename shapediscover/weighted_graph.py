@@ -126,6 +126,8 @@ class WeightedGraph:
     ):
         graph = self.adjacency_matrix()
 
+        # symmetric normalized Laplacian L = I - D^{-1/2} A D^{-1/2}; this assumes
+        # A has no self-loops (zero diagonal), which graph_from_pointcloud enforces
         sqrt_deg = np.sqrt(np.asarray(graph.sum(axis=0)).squeeze())
         I = sp.sparse.identity(graph.shape[0], dtype=np.float64)
         D = sp.sparse.spdiags(1.0 / sqrt_deg, 0, graph.shape[0], graph.shape[0])
@@ -236,7 +238,23 @@ def graph_from_pointcloud(
     else:
         raise Exception("Algorithm not recognized", algorithm)
 
+    # the rest of the pipeline (in particular the normalized Laplacian in
+    # laplacian_eigenfunctions, which assumes no self-loops) relies on the graph
+    # having no self-edges; both algorithms produce a zero diagonal, so check it
+    if (adjacency_matrix.diagonal() != 0).any():
+        raise ValueError(
+            "neighborhood graph has self-edges (nonzero adjacency diagonal); "
+            "the normalized Laplacian assumes none."
+        )
+
     # the flat adjacency list is stored with a uniform stride of n_neighbors
+    # NOTE: each vertex's knn block includes the vertex itself (at position 0)
+    # and the range below ends at start + n_neighbors - 1, so the topological
+    # loss's union-find effectively skips both the self-entry (it is always
+    # excluded by the ranks[y] < hind guard in persistence_based_flattening) and
+    # the farthest neighbor. Tightening this would change the topology-loss
+    # neighbor set and thus results, so it is left to the benchmark-driven R&D
+    # phase (see notes/TODO.md).
     starts = np.arange(0, n_points * n_neighbors, n_neighbors, dtype=int)
     flat_neighbors_start_end = np.zeros((n_points, 2), dtype=int)
     flat_neighbors_start_end[:, 0] = starts
