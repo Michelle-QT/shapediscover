@@ -203,7 +203,8 @@ class WeightedGraph:
 
 
 def graph_from_pointcloud(
-    pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None
+    pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None,
+    delta=1.0,
 ):
     n_points = pointcloud.shape[0]
     if algorithm == "knn":
@@ -235,17 +236,52 @@ def graph_from_pointcloud(
             dtype=int,
         ).flatten()
 
+    elif algorithm == "cknn":
+        # Continuous k-NN (Berry and Sauer, 2019): connect i, j iff
+        # d(i, j) < delta * sqrt(d_k(i) * d_k(j)), where d_k(i) is the distance to
+        # i's n_neighbors-th neighbor. The local scale d_k adapts to density, so
+        # the graph is self-tuning and far less sensitive than a fixed-radius or
+        # fixed-knn graph (the central "no single knn works" finding). Edges are
+        # gathered from a candidate neighborhood and filtered by the condition;
+        # each point's nearest neighbor is always kept (a connectivity floor that
+        # avoids isolated vertices, which would break the normalized Laplacian).
+        from sklearn.neighbors import NearestNeighbors
+
+        n_candidates = int(min(n_points - 1, max(4 * n_neighbors, 20)))
+        nn = NearestNeighbors(n_neighbors=n_candidates + 1, metric=metric).fit(pointcloud)
+        cand_dists, cand_idx = nn.kneighbors(pointcloud)  # column 0 is the point itself
+        d_k = cand_dists[:, n_neighbors]  # distance to the k-th neighbor (col 0 = self)
+        src = np.repeat(np.arange(n_points), n_candidates)
+        dst = cand_idx[:, 1:].ravel()
+        dd = cand_dists[:, 1:].ravel()
+        keep = dd ** 2 < (delta ** 2) * d_k[src] * d_k[dst]
+        src, dst = src[keep], dst[keep]
+        nn1 = cand_idx[:, 1]  # nearest neighbor of each point (connectivity floor)
+        src = np.concatenate([src, np.arange(n_points)])
+        dst = np.concatenate([dst, nn1])
+        adjacency_matrix = sp.sparse.csr_matrix(
+            (np.ones(len(src)), (src, dst)), shape=(n_points, n_points)
+        )
+        adjacency_matrix.data[:] = 1.0  # csr summed duplicate candidate/floor edges
+        adjacency_matrix = adjacency_matrix.maximum(adjacency_matrix.T)  # symmetric 0/1
+        flat_neighbors = None  # variable degree: derive the adjacency list from the matrix
+
     else:
         raise Exception("Algorithm not recognized", algorithm)
 
     # the rest of the pipeline (in particular the normalized Laplacian in
     # laplacian_eigenfunctions, which assumes no self-loops) relies on the graph
-    # having no self-edges; both algorithms produce a zero diagonal, so check it
+    # having no self-edges; the algorithms produce a zero diagonal, so check it
     if (adjacency_matrix.diagonal() != 0).any():
         raise ValueError(
             "neighborhood graph has self-edges (nonzero adjacency diagonal); "
             "the normalized Laplacian assumes none."
         )
+
+    # Variable-degree graphs (cknn) have no uniform-stride flat adjacency list, so
+    # let WeightedGraph derive it from the adjacency matrix on first use.
+    if flat_neighbors is None:
+        return WeightedGraph(adjacency_matrix)
 
     # the flat adjacency list is stored with a uniform stride of n_neighbors
     # NOTE: each vertex's knn block includes the vertex itself (at position 0)
