@@ -170,6 +170,9 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         n_max_iter: int = 250,
         early_stop: bool = True,
         early_stop_tolerance: float = 1e-4,
+        # "gradient" (absolute param-gradient norm; n-confounded) or
+        # "relative_loss" (relative loss-change; n-invariant)
+        early_stop_criterion: str = "gradient",
         n_saved_iterations: int = 0,
         verbose: bool = True,
         plot_loss_curve: bool = True,
@@ -197,6 +200,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.n_max_iter = n_max_iter
         self.early_stop = early_stop
         self.early_stop_tolerance = early_stop_tolerance
+        self.early_stop_criterion = early_stop_criterion
         self.n_saved_iterations = n_saved_iterations
         self.verbose = verbose
         self.plot_loss_curve = plot_loss_curve
@@ -461,9 +465,12 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             partition_of_unity, optimization_algorithm
         )
         if self.early_stop:
-            early_stopper = GradientEarlyStopper(
-                partition_of_unity, self.early_stop_tolerance
-            )
+            if self.early_stop_criterion == "relative_loss":
+                early_stopper = LossPlateauEarlyStopper(self.early_stop_tolerance)
+            else:
+                early_stopper = GradientEarlyStopper(
+                    partition_of_unity, self.early_stop_tolerance
+                )
 
         initialization_losses = []
         initialization_target = torch.tensor(
@@ -479,7 +486,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             loss.backward()
             optimizer_initialization.step()
 
-            if self.early_stop and early_stopper.early_stop():
+            if self.early_stop and early_stopper.early_stop(loss):
                 break
 
         self.initialization_losses_ = np.array(initialization_losses)
@@ -504,9 +511,12 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             density_normalize=self.density_normalize_losses,
         )
         if self.early_stop:
-            early_stopper = GradientEarlyStopper(
-                partition_of_unity, self.early_stop_tolerance
-            )
+            if self.early_stop_criterion == "relative_loss":
+                early_stopper = LossPlateauEarlyStopper(self.early_stop_tolerance)
+            else:
+                early_stopper = GradientEarlyStopper(
+                    partition_of_unity, self.early_stop_tolerance
+                )
 
         save_output_at_iterations = []
         if self.n_saved_iterations > 0:
@@ -531,7 +541,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
                 if iteration_number in save_output_at_iterations:
                     historical_outputs.append(current_pfuzzy_cover.detach().numpy())
 
-            if self.early_stop and early_stopper.early_stop():
+            if self.early_stop and early_stopper.early_stop(loss):
                 break
 
         self.main_optimization_losses_ = loss_function._historical_losses
@@ -608,7 +618,7 @@ class GradientEarlyStopper:
         self._model = model
         self._counter = 0
 
-    def early_stop(self):
+    def early_stop(self, loss=None):
         gradient_norm = model_gradient_norm(self._model)
 
         if gradient_norm < self._tolerance:
@@ -618,6 +628,33 @@ class GradientEarlyStopper:
         else:
             self._counter = 0
         return False
+
+
+class LossPlateauEarlyStopper:
+    """Stop when the loss stops improving by a *relative* amount.
+
+    Unlike the gradient-norm criterion, this is invariant to the number of
+    parameters (hence to the number of data points): the loss is O(1) and (with
+    density-normalized losses) sampling-invariant, so a relative-improvement
+    threshold gives the same stopping point regardless of n. Fixes the n-confound
+    where a denser sample trips the absolute gradient threshold sooner and
+    under-trains (see the project notes).
+    """
+
+    def __init__(self, tolerance, patience=5):
+        self._tolerance = tolerance
+        self._patience = patience
+        self._best = float("inf")
+        self._counter = 0
+
+    def early_stop(self, loss):
+        loss = float(loss)
+        if loss < self._best * (1.0 - self._tolerance):
+            self._best = loss
+            self._counter = 0
+        else:
+            self._counter += 1
+        return self._counter >= self._patience
 
 
 def model_gradient_norm(model):
