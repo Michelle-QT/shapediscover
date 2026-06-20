@@ -23,6 +23,7 @@ optimization-evolution and n_cover sweep::
 from __future__ import annotations
 
 import argparse
+import time
 import warnings
 from pathlib import Path
 
@@ -285,6 +286,151 @@ def diagnose_weight_sweep(name, *, knn, seed, n_cover=None, weight_grid=None,
     lines.append("")
 
 
+# Frontier A: homogeneous (constant / zero curvature) manifolds only, so the
+# overlap<->dimension law is not confounded by curvature (the donut is excluded
+# on purpose). Each entry is (name, [n_cover grid], intrinsic_dim); the n_cover
+# grids are capped so the top-dimension nerve C(n_cover, d+2) stays tractable
+# (the dense-nerve blow-up is itself part of the high-dim finding).
+OVERLAP_LAW_MANIFOLDS = [
+    ("circle", [8, 12, 20], 1),
+    ("sphere2", [15, 24, 40], 2),
+    ("clifford_torus", [24, 40, 52], 2),
+    ("sphere3", [24, 40, 52], 3),       # C(52,5)=2.6M caps the dim-4 nerve build
+    ("s2_times_s1", [40, 52], 3),
+    ("torus3", [40, 52], 3),
+    ("sphere4", [24, 32], 4),           # C(32,6)=0.9M caps the dim-5 nerve build
+]
+
+
+def diagnose_overlap_law(manifolds=None, *, knn, seeds, n_max_iter=200,
+                         n_snapshots=8, out_dir, figures, lines):
+    """Frontier A: optimal overlap vs intrinsic dimension and topological complexity.
+
+    Recovery is non-monotone in the mean per-point overlap (participation ratio
+    PR): too much (complete nerve) and too little (over-sharp) both fail, with an
+    optimal band between. For each homogeneous manifold this finds, over an
+    ``n_cover`` sweep and the optimization trajectory (early stop off), the
+    snapshot of peak recovery and records the overlap there (``PR@peak``, the
+    "optimal overlap"), plus the convergent overlap (``PR@conv``). Two questions:
+
+    - does optimal overlap scale with intrinsic dimension ``d`` and with
+      topological complexity (sum of Betti numbers)? -> a predictive law for
+      auto-setting ``n_cover`` / the measure-regularity balance;
+    - does the cover *overshoot* the optimal overlap at convergence
+      (``PR@conv < PR@peak``, i.e. over-optimization), and is that overshoot the
+      thing that distinguishes the manifolds the method handles from those it
+      does not?
+    """
+    manifolds = manifolds or OVERLAP_LAW_MANIFOLDS
+    lines.append(f"## Overlap law: optimal overlap vs dimension / complexity "
+                 f"(knn={knn}, seeds={list(seeds)}, early stop off)\n")
+    lines.append("| manifold | d | betti | best n_cover | peak rec | PR@peak | "
+                 "PR@conv | overshoot PR@conv/PR@peak | conv rec |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+
+    plot_rows = []
+    timings = []
+    for name, ncovers, dim in manifolds:
+        t_manifold = time.perf_counter()
+        ds0 = ds_mod.load(name, seed=seeds[0])
+        target = ds0.target_betti
+        betti_sum = int(sum(target))
+        per_seed = []
+        for s in seeds:
+            X = ds_mod.load(name, seed=s).X
+            best = None
+            for nc in ncovers:
+                try:
+                    ev = cd.optimization_evolution(
+                        X, target, n_cover=nc, knn=knn, random_state=s,
+                        n_snapshots=n_snapshots, n_max_iter=n_max_iter)
+                except (MemoryError, ValueError):
+                    continue  # nerve blow-up at this (n_cover, dim); skip the config
+                rows = ev["rows"]
+                recs = [r["recovery_quotient"] for r in rows]
+                pk = int(np.argmax(recs))
+                cand = {
+                    "peak_rec": recs[pk], "pr_peak": rows[pk]["overlap_pr"],
+                    "pr_conv": rows[-1]["overlap_pr"], "conv_rec": recs[-1],
+                    "n_cover": nc, "peak_iter": rows[pk]["iteration"],
+                }
+                if best is None or cand["peak_rec"] > best["peak_rec"]:
+                    best = cand
+            if best is not None:
+                per_seed.append(best)
+        if not per_seed:
+            lines.append(f"| {name} | {dim} | {target} | - | (all configs skipped) "
+                         "| - | - | - | - |")
+            continue
+
+        def mean(key):
+            return float(np.mean([b[key] for b in per_seed]))
+
+        def std(key):
+            return float(np.std([b[key] for b in per_seed]))
+
+        pr_peak, pr_conv = mean("pr_peak"), mean("pr_conv")
+        overshoot = pr_conv / pr_peak if pr_peak else float("nan")
+        # the n_cover most often selected as best
+        ncs = [b["n_cover"] for b in per_seed]
+        best_nc = max(set(ncs), key=ncs.count)
+        lines.append(
+            f"| {name} | {dim} | {target} | {best_nc} | "
+            f"{mean('peak_rec'):.3f} | {pr_peak:.2f}±{std('pr_peak'):.2f} | "
+            f"{pr_conv:.2f} | {overshoot:.2f} | {mean('conv_rec'):.3f} |")
+        plot_rows.append({"name": name, "dim": dim, "betti_sum": betti_sum,
+                          "pr_peak": pr_peak, "pr_peak_std": std("pr_peak"),
+                          "peak_rec": mean("peak_rec"), "overshoot": overshoot})
+        timings.append((name, dim, time.perf_counter() - t_manifold))
+    lines.append("")
+    # efficiency note: this experiment is in the large-n_cover / high-dim regime
+    # where the dense nerve C(n_cover, d+2) dominates (see the efficiency TODO).
+    lines.append("Wall time per manifold (this is the nerve-bound regime): "
+                 + ", ".join(f"{n}(d{d}) {t:.0f}s" for n, d, t in timings)
+                 + f"; total {sum(t for _, _, t in timings):.0f}s.")
+    lines.append("")
+    lines.append("PR@peak = mean overlap (effective elements/point) at the "
+                 "peak-recovery iterate (the *optimal* overlap); PR@conv = overlap "
+                 "at convergence; overshoot < 1 means the cover sharpens past the "
+                 "optimum (over-optimization).")
+    lines.append("")
+
+    if figures and plot_rows:
+        _plot_overlap_law(plot_rows, out_dir)
+    return plot_rows
+
+
+def _plot_overlap_law(plot_rows, out_dir):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    dims = [r["dim"] for r in plot_rows]
+    prs = [r["pr_peak"] for r in plot_rows]
+    errs = [r["pr_peak_std"] for r in plot_rows]
+    sizes = [40 + 30 * r["betti_sum"] for r in plot_rows]
+    sc = ax.scatter(dims, prs, s=sizes, c=[r["peak_rec"] for r in plot_rows],
+                    cmap="viridis", vmin=0, vmax=1, zorder=3)
+    ax.errorbar(dims, prs, yerr=errs, fmt="none", ecolor="grey", alpha=0.5, zorder=2)
+    for r in plot_rows:
+        ax.annotate(f"{r['name']}\nb={r['betti_sum']}", (r["dim"], r["pr_peak"]),
+                    fontsize=7, xytext=(6, 0), textcoords="offset points", va="center")
+    # reference lines d+1 and d+2 (the naive local-nerve overlap for a d-patch)
+    xs = np.array(sorted(set(dims)))
+    ax.plot(xs, xs + 1, "--", color="C1", alpha=0.6, label="d+1")
+    ax.plot(xs, xs + 2, ":", color="C3", alpha=0.6, label="d+2")
+    ax.set_xlabel("intrinsic dimension d")
+    ax.set_ylabel("optimal overlap PR@peak (effective elements / point)")
+    ax.set_title("Overlap law: optimal overlap vs dimension\n"
+                 "(marker size ~ sum of Betti; color = peak recovery)")
+    ax.legend()
+    plt.colorbar(sc, ax=ax, label="peak recovery")
+    fig.tight_layout()
+    fig.savefig(out_dir / "overlap_law.png", dpi=120)
+    plt.close(fig)
+
+
 def diagnose_n_cover(name, *, knn, seed, n_covers, lines):
     ds = ds_mod.load(name, seed=seed)
     target = ds.target_betti
@@ -320,6 +466,12 @@ def main(argv=None):
     parser.add_argument("--weight-sweep", action="store_true",
                         help="run the measure/regularity weight sweep (experiment #1) "
                              "on every dataset at its natural n_cover")
+    parser.add_argument("--overlap-law", action="store_true",
+                        help="Frontier A: measure optimal overlap (PR) vs intrinsic "
+                             "dimension / topological complexity across the "
+                             "homogeneous manifolds (n_cover sweep, multi-seed)")
+    parser.add_argument("--seeds", type=int, default=3, metavar="N",
+                        help="(--overlap-law) number of seeds 0..N-1")
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = parser.parse_args(argv)
 
@@ -352,6 +504,15 @@ def main(argv=None):
             diagnose_weight_sweep(name, knn=args.knn, seed=args.seed, lines=lines)
         report = "\n".join(lines)
         (out_dir / "report_weight_sweep.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.overlap_law:
+        diagnose_overlap_law(knn=args.knn, seeds=tuple(range(args.seeds)),
+                             out_dir=out_dir, figures=figures, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_overlap_law.md").write_text(report)
         print(report)
         print(f"\n[diagnostics written to {out_dir}]")
         return
