@@ -62,9 +62,12 @@ def test_fuzzy_cover_to_filtered_complex_births():
     fc = fuzzy_cover_to_filtered_complex(COVER, max_dimension=1)
     np.testing.assert_array_equal(fc._simplices[0], [[0], [1], [2]])
     np.testing.assert_allclose(fc._births[0], [1.0, 1.0, 1.0])
-    np.testing.assert_array_equal(fc._simplices[1], [[0, 1], [0, 2], [1, 2]])
+    # only adjacent cover elements intersect (0-1 and 1-2); 0-2 has empty
+    # intersection so its edge is not part of the nerve (consistent with
+    # test_fuzzy_cover_to_weighted_edges above)
+    np.testing.assert_array_equal(fc._simplices[1], [[0, 1], [1, 2]])
     # vertex birth = max membership; edge birth = max pointwise min overlap
-    np.testing.assert_allclose(fc._births[1], [0.5, 0.0, 0.5])
+    np.testing.assert_allclose(fc._births[1], [0.5, 0.5])
 
 
 def test_fuzzy_cover_from_kmeans_is_one_hot():

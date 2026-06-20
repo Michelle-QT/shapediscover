@@ -59,8 +59,12 @@ def test_nerve_persistence_of_a_4cycle_cover():
     st = fuzzy_cover_to_filtered_complex(cover, max_dimension=2).to_simplex_tree(
         log_normalization=False
     )
-    st.persistence()
+    # the cover elements have no common triple intersection, so the nerve is the
+    # bare 4-cycle: its loop is an essential (never-dying) class. gudhi skips
+    # homology in the top dimension unless persistence_dim_max is set.
+    st.persistence(persistence_dim_max=True)
     h1 = st.persistence_intervals_in_dimension(1)
     assert h1.shape[0] == 1  # exactly one loop in the nerve
+    assert np.isinf(h1[0, 1])  # the loop never fills in (no triple intersections)
     h0 = st.persistence_intervals_in_dimension(0)
     assert int(np.sum(np.isinf(h0[:, 1]))) == 1  # one connected component survives

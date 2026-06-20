@@ -140,60 +140,95 @@ def simplex_to_psimplex_numpy(functions, p=2):
     return functions / np.linalg.norm(functions, ord=p, axis=0)
 
 
-def fuzzy_cover_to_filtered_complex(functions, max_dimension=1):
+# The nerve construction is two numba kernels at module level so they compile
+# once (a kernel closed over ``functions`` recompiles on every call) and so the
+# heavy births pass can run in parallel.
 
-    @nb.jit(nopython=True)
-    def _fuzzy_cover_to_filtered_complex_main_loop(
-        n_points, n, dimension, simplices_of_dimension, births_of_dimension
-    ):
-        r = dimension + 1
-        n_simplices = births_of_dimension.shape[0]
-        for k in range(n_simplices):
 
-            # build simplex
-            if k == 0:
-                simplex = np.arange(r)
-            else:
-                for i in range(r - 1, -1, -1):
-                    if simplex[i] != i + n - r:
-                        break
-                simplex[i] += 1
-                for j in range(i + 1, r):
-                    simplex[j] = simplex[j - 1] + 1
+@nb.njit
+def _enumerate_simplices_of_dimension(n, r, simplices):
+    """Fill ``simplices`` row by row with the ``C(n, r)`` increasing ``r``-subsets
+    of ``range(n)`` in lexicographic order.
 
-            simplices_of_dimension[k] = simplex
+    Sequential by construction (each subset is the successor of the previous),
+    so this cannot be parallelized; the births pass below can.
+    """
+    n_simplices = simplices.shape[0]
+    for k in range(n_simplices):
+        if k == 0:
+            for i in range(r):
+                simplices[0, i] = i
+            continue
+        # advance to the next subset in lexicographic order
+        i = r - 1
+        while i >= 0 and simplices[k - 1, i] == i + n - r:
+            i -= 1
+        for j in range(r):
+            simplices[k, j] = simplices[k - 1, j]
+        simplices[k, i] += 1
+        for j in range(i + 1, r):
+            simplices[k, j] = simplices[k, j - 1] + 1
 
-            for x_index in range(n_points):
-                birth_according_to_x = min(functions[simplex, x_index])
-                births_of_dimension[k] = max(
-                    birth_according_to_x, births_of_dimension[k]
-                )
 
-    n_cover_elements = functions.shape[0]
+@nb.njit(parallel=True)
+def _simplex_births(functions, simplices, births):
+    """Birth value of each simplex: the largest, over all points, of the minimum
+    membership across the simplex's vertices (0 when their supports never meet).
+
+    Parallel over simplices; the inner min/max are exact comparisons, so the
+    result is independent of the thread count (no floating-point reordering).
+    """
+    r = simplices.shape[1]
     n_points = functions.shape[1]
+    for k in nb.prange(simplices.shape[0]):
+        best = 0.0
+        for x_index in range(n_points):
+            # minimum membership over the simplex's vertices at this point
+            m = functions[simplices[k, 0], x_index]
+            for vi in range(1, r):
+                v = functions[simplices[k, vi], x_index]
+                if v < m:
+                    m = v
+            if m > best:
+                best = m
+        births[k] = best
+
+
+def fuzzy_cover_to_filtered_complex(functions, max_dimension=1):
+    """Build the nerve of a fuzzy cover as a filtered simplicial complex.
+
+    ``functions`` is the cover in the internal ``(n_cover_elements, n_points)``
+    orientation. A ``d``-simplex (a ``(d+1)``-subset of cover elements) is kept
+    only when its members share a point of positive membership (a nonempty
+    intersection); its birth value is the largest such common membership.
+    Simplices with an empty intersection (birth 0) are dropped.
+
+    Note: a partition of unity with full support (e.g. a softmax cover) makes
+    every intersection nonempty, so the nerve is the full simplex on the cover
+    elements and nothing is dropped. Genuine sparsity requires a compact-support
+    cover (see the cover-sparsification direction in the project notes).
+    """
+    functions = np.ascontiguousarray(functions)
+    n_cover_elements = functions.shape[0]
 
     births = []
     simplices = []
 
     for dimension in range(max_dimension + 1):
-        n_simplices = comb(n_cover_elements, dimension + 1, exact=True)
-        simplices_of_dimension = np.zeros((n_simplices, dimension + 1), dtype=int)
-        births_of_dimension = np.full(n_simplices, -1, dtype=float)
+        r = dimension + 1
+        n_simplices = comb(n_cover_elements, r, exact=True)
+        simplices_of_dimension = np.zeros((n_simplices, r), dtype=np.int64)
+        births_of_dimension = np.zeros(n_simplices, dtype=np.float64)
 
-        _fuzzy_cover_to_filtered_complex_main_loop(
-            n_points,
-            n_cover_elements,
-            dimension,
-            simplices_of_dimension,
-            births_of_dimension,
+        _enumerate_simplices_of_dimension(
+            n_cover_elements, r, simplices_of_dimension
         )
+        _simplex_births(functions, simplices_of_dimension, births_of_dimension)
 
-        # filter out simplices that never appeared
-        simplices_of_dimension = simplices_of_dimension[births_of_dimension != -1]
-        births_of_dimension = births_of_dimension[births_of_dimension != -1]
-
-        simplices.append(simplices_of_dimension)
-        births.append(births_of_dimension)
+        # keep only simplices whose cover elements actually intersect
+        nonempty = births_of_dimension > 0
+        simplices.append(simplices_of_dimension[nonempty])
+        births.append(births_of_dimension[nonempty])
 
     return FilteredComplex(simplices, births)
 
