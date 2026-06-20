@@ -28,6 +28,33 @@ def sparsemax(z, dim=0):
     return torch.clamp(z - tau, min=0.0)
 
 
+def entmax15(z, dim=0):
+    """Alpha=1.5 entmax (Peters, Niculae, Martins, 2019): a sparse projection onto
+    the simplex that sits between softmax (alpha=1, dense) and sparsemax (alpha=2).
+
+    It keeps strictly more support than sparsemax (a gentler sparsity), useful when
+    full sparsemax over-thins the cover and destroys overlap-dependent topology
+    (the tori). Differentiable via autograd through the sort / threshold.
+    """
+    z = z - z.max(dim=dim, keepdim=True).values
+    z = z / 2.0
+    z_sorted, _ = torch.sort(z, dim=dim, descending=True)
+    n = z.shape[dim]
+    rho = torch.arange(1, n + 1, device=z.device, dtype=z.dtype)
+    shape = [1] * z.dim()
+    shape[dim] = n
+    rho = rho.view(shape)
+    mean = z_sorted.cumsum(dim) / rho
+    mean_sq = (z_sorted ** 2).cumsum(dim) / rho
+    ss = rho * (mean_sq - mean ** 2)
+    delta = (1.0 - ss) / rho
+    delta_nz = torch.clamp(delta, min=0.0)
+    tau = mean - torch.sqrt(delta_nz)
+    support_size = (tau <= z_sorted).to(z.dtype).sum(dim=dim, keepdim=True)
+    tau_star = torch.gather(tau, dim, support_size.long() - 1)
+    return torch.clamp(z - tau_star, min=0.0) ** 2
+
+
 class PartitionOfUnity(torch.nn.Module):
     def __init__(
         self,
@@ -55,9 +82,10 @@ class PartitionOfUnity(torch.nn.Module):
         """
         super().__init__()
         self._model = model
-        if map_to_simplex not in ("softmax", "sparsemax"):
+        if map_to_simplex not in ("softmax", "sparsemax", "entmax15"):
             raise ValueError(
-                f"map_to_simplex must be 'softmax' or 'sparsemax'; got {map_to_simplex!r}."
+                "map_to_simplex must be 'softmax', 'sparsemax', or 'entmax15'; "
+                f"got {map_to_simplex!r}."
             )
         self._map_to_simplex = map_to_simplex
         self._temperature = temperature
@@ -66,6 +94,8 @@ class PartitionOfUnity(torch.nn.Module):
         z = self._model() / self._temperature
         if self._map_to_simplex == "sparsemax":
             return sparsemax(z, dim=0)
+        if self._map_to_simplex == "entmax15":
+            return entmax15(z, dim=0)
         return torch.softmax(z, dim=0)
 
 
