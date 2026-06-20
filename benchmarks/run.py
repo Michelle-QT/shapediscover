@@ -55,6 +55,8 @@ def main(argv=None) -> int:
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--label-mode", default="components", choices=["components", "argmax"])
     p.add_argument("--tag", default="run", help="output filename stem")
+    p.add_argument("--profile-memory", action="store_true",
+                   help="record peak Python memory per phase (tracemalloc; adds overhead)")
     p.add_argument("--list", action="store_true", help="list available datasets and exit")
     args = p.parse_args(argv)
 
@@ -85,13 +87,14 @@ def main(argv=None) -> int:
         seeds=tuple(range(args.seeds)),
         axes=tuple(args.axes),
         out_csv=out_csv,
+        profile_memory=args.profile_memory,
     )
 
     if len(df):
         summary = summarize(df)
         pd.set_option("display.max_rows", None, "display.width", 140)
         print("\n=== seed-averaged summary (mean +/- std) ===")
-        for axis in args.axes:
+        for axis in list(args.axes) + ["cost"]:
             sub = summary[summary["axis"] == axis]
             if len(sub):
                 print(f"\n[{axis}]")
