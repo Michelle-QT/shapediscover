@@ -1,0 +1,6 @@
+# Benchmark result CSVs are run-to-run churn; ignore them by default.
+# Curated milestone baselines are named baseline_*.csv and ARE tracked
+# (so cited baseline numbers stay reproducible).
+# Ad-hoc / sweep runs use any other --tag and are ignored automatically.
+*.csv
+!baseline_*.csv
