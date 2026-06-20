@@ -64,6 +64,9 @@ class BenchmarkDataset:
         Expected Betti numbers ``[b0, b1, ...]`` for the topology axis, if known.
     axes : tuple[str, ...]
         Which capability axes this dataset supports.
+    preprocessing : str
+        The declared feature-preprocessing policy applied in :func:`load`
+        (``"none"`` / ``"standardize"`` / ``"unit_norm"``); see :func:`_preprocess`.
     metadata : dict
         Free-form provenance / parameters (kept in the results table).
     """
@@ -73,6 +76,7 @@ class BenchmarkDataset:
     labels: np.ndarray | None = None
     target_betti: list[int] | None = None
     axes: tuple[str, ...] = ()
+    preprocessing: str = "none"
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -261,20 +265,25 @@ def _ds_nested_circles(seed: int = 0, n: int = 800, noise: float = 0.05,
 def _ds_iris(seed: int = 0) -> BenchmarkDataset:
     from sklearn.datasets import load_iris
     d = load_iris()
+    # Raw: a single unit (cm) with only mild (~4x) scale spread, so standardizing
+    # is unwarranted (and empirically slightly hurts); see the preprocessing policy.
     return BenchmarkDataset(
         "iris", d.data.astype(float), labels=d.target.astype(int),
-        axes=(CLUSTERING, EMBEDDING), metadata={"n": int(d.data.shape[0]), "n_classes": 3},
+        axes=(CLUSTERING, EMBEDDING),
+        metadata={"n": int(d.data.shape[0]), "n_classes": 3},
     )
 
 
 @register("wine")
 def _ds_wine(seed: int = 0) -> BenchmarkDataset:
-    # NB: raw features (very different scales); see the standardization-policy TODO.
+    # Heterogeneous feature scales (e.g. proline ~1000 vs others ~1): standardized
+    # by the registry's preprocessing policy (see _preprocess).
     from sklearn.datasets import load_wine
     d = load_wine()
     return BenchmarkDataset(
         "wine", d.data.astype(float), labels=d.target.astype(int),
-        axes=(CLUSTERING, EMBEDDING), metadata={"n": int(d.data.shape[0]), "n_classes": 3},
+        axes=(CLUSTERING, EMBEDDING), preprocessing="standardize",
+        metadata={"n": int(d.data.shape[0]), "n_classes": 3},
     )
 
 
@@ -292,6 +301,7 @@ def _ds_diabetes(seed: int = 0) -> BenchmarkDataset:
     X = df.drop(columns=["group"]).to_numpy(dtype=float)
     return BenchmarkDataset(
         "diabetes", X, labels=y, axes=(CLUSTERING, EMBEDDING),
+        preprocessing="standardize",
         metadata={"n": int(X.shape[0]), "n_classes": int(len(set(y))), "source": str(path)},
     )
 
@@ -308,6 +318,7 @@ def _ds_mice_protein(seed: int = 0) -> BenchmarkDataset:
     X = df.select_dtypes("number").to_numpy(dtype=float)
     return BenchmarkDataset(
         "mice_protein", X, labels=y, axes=(CLUSTERING, EMBEDDING),
+        preprocessing="standardize",
         metadata={"n": int(X.shape[0]), "n_classes": int(len(set(y))), "source": str(path)},
     )
 
@@ -350,11 +361,50 @@ def _ds_human(seed: int = 0) -> BenchmarkDataset:
     )
 
 
-def load(name: str, seed: int = 0, **kwargs) -> BenchmarkDataset:
-    """Build a registered dataset by name."""
+def _preprocess(X: np.ndarray, kind: str) -> np.ndarray:
+    """Apply the declared feature preprocessing (the harness-wide policy).
+
+    Applied centrally in :func:`load` so every method and every metric sees the
+    same feature space (preprocessing affects all methods equally):
+
+    - ``"none"``        raw features (synthetic manifolds, meshes, embeddings,
+      and common-scale sets like the digit pixels).
+    - ``"standardize"`` zero-mean unit-variance per feature, for heterogeneous-
+      scale tabular sets (wine, mice protein, diabetes, iris); zero-variance
+      features are left untouched by ``StandardScaler``.
+    - ``"unit_norm"``   project each point onto the unit 2-sphere (the single-cell
+      recipe), guarding zero-norm rows.
+    """
+    if kind == "none":
+        return X
+    if kind == "standardize":
+        from sklearn.preprocessing import StandardScaler
+
+        return StandardScaler().fit_transform(X)
+    if kind == "unit_norm":
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return X / norms
+    raise ValueError(f"unknown preprocessing {kind!r}")
+
+
+def load(name: str, seed: int = 0, preprocess: bool = True, **kwargs) -> BenchmarkDataset:
+    """Build a registered dataset by name, applying its declared preprocessing.
+
+    Preprocessing (``BenchmarkDataset.preprocessing``) is applied here, the single
+    point every consumer (runner, sweeps, ad hoc) goes through, so it is applied
+    identically to every method and metric. Pass ``preprocess=False`` for the raw
+    features. The effective policy is recorded in ``metadata["preprocessing"]``.
+    """
     if name not in DATASETS:
         raise KeyError(f"unknown dataset {name!r}; available: {sorted(DATASETS)}")
-    return DATASETS[name](seed=seed, **kwargs)
+    ds = DATASETS[name](seed=seed, **kwargs)
+    if preprocess and ds.preprocessing != "none":
+        ds.X = _preprocess(ds.X, ds.preprocessing)
+        ds.metadata["preprocessing"] = ds.preprocessing
+    else:
+        ds.metadata["preprocessing"] = "none"
+    return ds
 
 
 def available(axis: str | None = None) -> list[str]:
