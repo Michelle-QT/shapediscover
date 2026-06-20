@@ -4,3 +4,6 @@
 # Ad-hoc / sweep runs use any other --tag and are ignored automatically.
 *.csv
 !baseline_*.csv
+
+# Diagnostic reports / figures are regenerable scratch output.
+diagnostics/

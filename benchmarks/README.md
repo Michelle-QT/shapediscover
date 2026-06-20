@@ -14,7 +14,11 @@ not shipped in the `shapediscover` wheel.
 - `runner.py` one fit per `(dataset, seed)`, scores every applicable axis, emits a
   tidy long table.
 - `run.py` CLI.
-- `results/` output CSVs.
+- `cover_diagnostics.py` look *inside* a learned cover / its nerve (surviving
+  structure, filtered-Betti trajectory, per-simplex birth vs volume, volume-vs-birth
+  filtration, optimization-evolution replay, `n_cover` sweep, layout-free plots).
+- `diagnose.py` CLI driving the diagnostics on a target dataset + controls.
+- `results/` output CSVs (`results/diagnostics/` holds regenerable diagnostic output).
 
 ## Usage
 
@@ -40,6 +44,13 @@ from benchmarks.runner import run_suite, summarize
 df = run_suite(["sphere2", "digits"], ShapeDiscoverMethod,
                base_params={"n_cover": 15}, seeds=(0, 1, 2))
 print(summarize(df))
+```
+
+Diagnose what a cover / nerve actually looks like (target + controls, figures and a
+markdown report under `results/diagnostics/`):
+
+```
+python -m benchmarks.diagnose --evolution --n-cover-sweep
 ```
 
 Results are long format (one row per metric): `dataset, method, axis, metric,
