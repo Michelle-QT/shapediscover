@@ -22,7 +22,7 @@ import pandas as pd
 
 from . import datasets as ds_mod
 from .datasets import CLUSTERING, EMBEDDING, TOPOLOGY
-from .methods import ShapeDiscoverMethod
+from .methods import FuzzyCoverMethod, ShapeDiscoverMethod
 from .runner import run_suite, summarize
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -58,6 +58,14 @@ def main(argv=None) -> int:
     p.add_argument("--lite", action="store_true",
                    help="use ShapeDiscoverLite (drops geometry/topology losses, faster) "
                         "instead of the full ShapeDiscover default")
+    p.add_argument("--method", default="shapediscover",
+                   choices=["shapediscover", "fuzzy_cover"],
+                   help="cover method: ShapeDiscover (learned) or the fuzzy-clustering baseline")
+    p.add_argument("--space", default="spectral", choices=["spectral", "euclidean"],
+                   help="(fuzzy_cover) feature space for fuzzy c-means: spectral "
+                        "(Laplacian eigenmaps, = ShapeDiscover's init) or euclidean (raw features)")
+    p.add_argument("--fuzzifier", type=float, default=2.0,
+                   help="(fuzzy_cover) fuzzy c-means exponent m (2.0 standard; ->1 hard, larger softer)")
     p.add_argument("--tag", default="run", help="output filename stem")
     p.add_argument("--profile-memory", action="store_true",
                    help="record peak Python memory per phase (tracemalloc; adds overhead)")
@@ -75,19 +83,31 @@ def main(argv=None) -> int:
         return 0
 
     datasets = args.datasets or DEFAULT_DATASETS
-    base_params = dict(
-        n_cover=args.n_cover,
-        knn=args.knn,
-        regularization=args.regularization,
-        threshold=args.threshold,
-        label_mode=args.label_mode,
-        lite=args.lite,
-    )
+    if args.method == "fuzzy_cover":
+        method_class = FuzzyCoverMethod
+        base_params = dict(
+            n_cover=args.n_cover,
+            knn=args.knn,
+            space=args.space,
+            fuzzifier=args.fuzzifier,
+            threshold=args.threshold,
+            label_mode=args.label_mode,
+        )
+    else:
+        method_class = ShapeDiscoverMethod
+        base_params = dict(
+            n_cover=args.n_cover,
+            knn=args.knn,
+            regularization=args.regularization,
+            threshold=args.threshold,
+            label_mode=args.label_mode,
+            lite=args.lite,
+        )
     out_csv = RESULTS_DIR / f"{args.tag}.csv"
 
     df = run_suite(
         dataset_names=datasets,
-        method_class=ShapeDiscoverMethod,
+        method_class=method_class,
         base_params=base_params,
         seeds=tuple(range(args.seeds)),
         axes=tuple(args.axes),

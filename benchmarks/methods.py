@@ -7,9 +7,22 @@ Every method exposes whichever of the three capability outputs it can produce:
 - ``persistence(d)``     -> (intervals, complex_size)  for the topology axis.
 
 A method's ``provides`` tuple declares which axes it supports, so the runner only
-asks for what is available. ShapeDiscover is the first (and currently only)
-method; external baselines (UMAP, KMeans, HDBSCAN, Rips/Alpha/Witness, ...) are
-deferred and slot in here later behind the same interface (see benchmarks/README).
+asks for what is available.
+
+Two cover-based methods live here, sharing the cover -> outputs machinery via
+:class:`CoverMethod`:
+
+- :class:`ShapeDiscoverMethod`  the learned cover (geometric optimization);
+- :class:`FuzzyCoverMethod`     a fuzzy-clustering cover baseline (no optimization).
+
+The fuzzy baseline normalizes a fuzzy clustering to a cover (max 1 per point, the
+``p=inf`` simplex map) and routes it through the *same* nerve / layout /
+components pipeline as ShapeDiscover, so the comparison is as fair as possible.
+Its ``space="spectral"`` variant runs fuzzy c-means on the same Laplacian
+eigenmaps ShapeDiscover initializes from, so it is exactly ShapeDiscover's own
+initialization without the optimization (the cleanest ablation of what the
+optimization buys). External baselines (UMAP, KMeans, Rips/Alpha/Witness, ...)
+slot in here later behind the same interface (see benchmarks/README).
 """
 
 from __future__ import annotations
@@ -41,73 +54,28 @@ class Method:
         return {}
 
 
-class ShapeDiscoverMethod(Method):
-    """Adapter over ``ShapeDiscoverLite`` / ``ShapeDiscover``.
+class CoverMethod(Method):
+    """Shared base for methods that produce a fuzzy cover ``cover_``.
 
-    From the single learned fuzzy cover it derives all three capability outputs:
+    From a fitted ``cover_`` of shape ``(n_points, n_cover)`` it derives the
+    clustering and embedding capability outputs identically for any cover source:
 
     - clustering: connected components of the thresholded nerve (``label_mode``
       ``"components"``, the distinctive "intrinsic number of clusters" route) or a
       plain ``"argmax"`` over cover elements;
     - embedding: each point placed at the membership-weighted barycenter of the
-      2D nerve layout of its cover elements (a per-point pseudo-embedding);
-    - topology: persistence of the nerve (filtered simplicial complex) plus the
-      complex size.
+      2D nerve layout of its cover elements (a per-point pseudo-embedding).
+
+    Subclasses set ``cover_`` in ``fit`` and implement ``persistence``. They are
+    expected to set ``threshold``, ``label_mode``, and ``layout_seed``.
     """
 
-    name = "shapediscover"
     provides = ("clustering", "embedding", "topology")
 
-    def __init__(
-        self,
-        n_cover: int = 15,
-        knn: int = 15,
-        regularization: float = 10.0,
-        threshold: float = 0.5,
-        label_mode: str = "components",
-        lite: bool = False,  # full ShapeDiscover by default; Lite drops geometry/topology losses
-        random_state: int | None = 0,
-        layout_seed: int = 0,
-        extra: dict | None = None,
-    ):
-        self.n_cover = n_cover
-        self.knn = knn
-        self.regularization = regularization
-        self.threshold = threshold
-        self.label_mode = label_mode
-        self.lite = lite
-        self.random_state = random_state
-        self.layout_seed = layout_seed
-        self.extra = dict(extra or {})
-
-    # -- fit ---------------------------------------------------------------- #
-
-    def fit(self, X: np.ndarray) -> "ShapeDiscoverMethod":
-        from shapediscover import ShapeDiscover, ShapeDiscoverLite
-
-        if self.lite:
-            est = ShapeDiscoverLite(
-                n_cover=self.n_cover,
-                knn=self.knn,
-                regularization=self.regularization,
-                random_state=self.random_state,
-                **self.extra,
-            )
-        else:
-            est = ShapeDiscover(
-                n_cover=self.n_cover,
-                knn=self.knn,
-                random_state=self.random_state,
-                verbose=False,
-                plot_loss_curve=False,
-                **self.extra,
-            )
-        self.cover_ = np.asarray(est.fit_transform(X))  # (n_points, n_cover)
-        self.estimator_ = est
-        # the underlying ShapeDiscover that exposes fit_persistence / simplex_tree_
-        # (Lite wraps one at est._discover); used for the topology axis.
-        self.discover_ = est if not self.lite else est._discover
-        return self
+    cover_: np.ndarray
+    threshold: float = 0.5
+    label_mode: str = "components"
+    layout_seed: int = 0
 
     # -- internal helpers --------------------------------------------------- #
 
@@ -173,6 +141,75 @@ class ShapeDiscoverMethod(Method):
         denom[denom == 0] = 1.0
         return (weights @ positions) / denom
 
+    # -- bookkeeping -------------------------------------------------------- #
+
+    def n_active_cover(self) -> int:
+        return int(self._survivors().sum())
+
+
+class ShapeDiscoverMethod(CoverMethod):
+    """Adapter over ``ShapeDiscoverLite`` / ``ShapeDiscover``.
+
+    From the single learned fuzzy cover it derives all three capability outputs;
+    the clustering and embedding live in :class:`CoverMethod`, the topology axis
+    is the persistence of the nerve via the maintained ``fit_persistence``.
+    """
+
+    name = "shapediscover"
+
+    def __init__(
+        self,
+        n_cover: int = 15,
+        knn: int = 15,
+        regularization: float = 10.0,
+        threshold: float = 0.5,
+        label_mode: str = "components",
+        lite: bool = False,  # full ShapeDiscover by default; Lite drops geometry/topology losses
+        random_state: int | None = 0,
+        layout_seed: int = 0,
+        extra: dict | None = None,
+    ):
+        self.n_cover = n_cover
+        self.knn = knn
+        self.regularization = regularization
+        self.threshold = threshold
+        self.label_mode = label_mode
+        self.lite = lite
+        self.random_state = random_state
+        self.layout_seed = layout_seed
+        self.extra = dict(extra or {})
+
+    # -- fit ---------------------------------------------------------------- #
+
+    def fit(self, X: np.ndarray) -> "ShapeDiscoverMethod":
+        from shapediscover import ShapeDiscover, ShapeDiscoverLite
+
+        if self.lite:
+            est = ShapeDiscoverLite(
+                n_cover=self.n_cover,
+                knn=self.knn,
+                regularization=self.regularization,
+                random_state=self.random_state,
+                **self.extra,
+            )
+        else:
+            est = ShapeDiscover(
+                n_cover=self.n_cover,
+                knn=self.knn,
+                random_state=self.random_state,
+                verbose=False,
+                plot_loss_curve=False,
+                **self.extra,
+            )
+        self.cover_ = np.asarray(est.fit_transform(X))  # (n_points, n_cover)
+        self.estimator_ = est
+        # the underlying ShapeDiscover that exposes fit_persistence / simplex_tree_
+        # (Lite wraps one at est._discover); used for the topology axis.
+        self.discover_ = est if not self.lite else est._discover
+        return self
+
+    # -- topology ----------------------------------------------------------- #
+
     def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
         # Delegate to the maintained ShapeDiscover.fit_persistence: it builds the
         # nerve from the public cover_, transposing to the internal orientation
@@ -185,9 +222,6 @@ class ShapeDiscoverMethod(Method):
         return intervals, int(self.discover_.simplex_tree_.num_simplices())
 
     # -- bookkeeping -------------------------------------------------------- #
-
-    def n_active_cover(self) -> int:
-        return int(self._survivors().sum())
 
     def params(self) -> dict:
         # the loss weights actually used, for reproducibility: Lite is
@@ -206,5 +240,118 @@ class ShapeDiscoverMethod(Method):
             "label_mode": self.label_mode,
             "lite": self.lite,
             "loss_weights": effective_loss_weights,
+            **{f"extra.{k}": v for k, v in self.extra.items()},
+        }
+
+
+class FuzzyCoverMethod(CoverMethod):
+    """Fuzzy-clustering cover baseline (no geometric optimization).
+
+    Runs fuzzy c-means and normalizes the memberships to a fuzzy cover with the
+    ``p=inf`` simplex map (max 1 per point), exactly the normalization
+    ShapeDiscover applies to its own output cover, then routes that cover through
+    the same nerve / layout / components pipeline (inherited from
+    :class:`CoverMethod`) and the same log-normalized nerve persistence.
+
+    ``space`` selects the feature space the clustering runs in:
+
+    - ``"euclidean"``  fuzzy c-means on the (preprocessed) input features;
+    - ``"spectral"``   fuzzy c-means on the Laplacian eigenmaps of the same
+      neighborhood graph ShapeDiscover builds, i.e. ShapeDiscover's own
+      ``spectral_fuzzy_clustering`` initialization without the optimization.
+
+    ``fuzzifier`` is the fuzzy c-means exponent ``m`` (2.0 standard; ``-> 1`` hard,
+    larger is softer), the baseline's analogue of a regularization knob.
+    """
+
+    name = "fuzzy_cover"
+
+    def __init__(
+        self,
+        n_cover: int = 15,
+        knn: int = 15,
+        space: str = "spectral",
+        fuzzifier: float = 2.0,
+        graph_algorithm: str = "umap",
+        metric: str = "euclidean",
+        threshold: float = 0.5,
+        label_mode: str = "components",
+        random_state: int | None = 0,
+        layout_seed: int = 0,
+        extra: dict | None = None,
+    ):
+        if space not in ("euclidean", "spectral"):
+            raise ValueError(f"space must be 'euclidean' or 'spectral'; got {space!r}")
+        self.n_cover = n_cover
+        self.knn = knn
+        self.space = space
+        self.fuzzifier = fuzzifier
+        self.graph_algorithm = graph_algorithm
+        self.metric = metric
+        self.threshold = threshold
+        self.label_mode = label_mode
+        self.random_state = random_state
+        self.layout_seed = layout_seed
+        self.extra = dict(extra or {})
+
+    # -- fit ---------------------------------------------------------------- #
+
+    def fit(self, X: np.ndarray) -> "FuzzyCoverMethod":
+        from shapediscover.fuzzy_cover import fuzzy_cover_from_fuzzycmeans
+
+        rng = np.random.default_rng(self.random_state)
+        seeds = rng.integers(0, 2**31 - 1, size=3)
+
+        if self.space == "euclidean":
+            features = np.asarray(X, dtype=float)
+        else:  # spectral: the same graph + eigenmaps ShapeDiscover initializes from
+            from shapediscover.weighted_graph import graph_from_pointcloud
+
+            graph = graph_from_pointcloud(
+                X,
+                n_neighbors=self.knn,
+                algorithm=self.graph_algorithm,
+                metric=self.metric,
+                random_state=int(seeds[0]),
+            )
+            features = graph.laplacian_eigenfunctions(
+                self.n_cover, random_state=int(seeds[1])
+            )
+
+        internal_cover = fuzzy_cover_from_fuzzycmeans(  # (n_cover, n_points), p=inf
+            features, self.n_cover, m=self.fuzzifier, random_state=int(seeds[2])
+        )
+        self.cover_ = np.asarray(internal_cover).T  # (n_points, n_cover)
+        return self
+
+    # -- topology ----------------------------------------------------------- #
+
+    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+        # Same nerve construction and log normalization as ShapeDiscover's
+        # fit_persistence (the shared _cover_to_simplex_tree helper), so the
+        # topology axis is compared on identical footing.
+        from shapediscover.shapediscover import _cover_to_simplex_tree
+
+        simplex_tree = _cover_to_simplex_tree(
+            self.cover_.T, max_dim, clique_complex=False, log_normalization=True
+        )
+        simplex_tree.persistence()
+        intervals = [
+            np.asarray(simplex_tree.persistence_intervals_in_dimension(d)).reshape(-1, 2)
+            for d in range(max_dim + 1)
+        ]
+        return intervals, int(simplex_tree.num_simplices())
+
+    # -- bookkeeping -------------------------------------------------------- #
+
+    def params(self) -> dict:
+        return {
+            "n_cover": self.n_cover,
+            "knn": self.knn,
+            "space": self.space,
+            "fuzzifier": self.fuzzifier,
+            "graph_algorithm": self.graph_algorithm,
+            "threshold": self.threshold,
+            "label_mode": self.label_mode,
             **{f"extra.{k}": v for k, v in self.extra.items()},
         }

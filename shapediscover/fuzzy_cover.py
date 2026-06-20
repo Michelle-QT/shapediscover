@@ -243,7 +243,13 @@ def fuzzy_cover_from_kmeans(pointcloud, n_clusters, random_state=None):
     return clustering_as_function_to_simplex
 
 
-def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, random_state=None):
+def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, m=2.0, random_state=None):
+    """Fuzzy c-means memberships, L-infinity-normalized to a fuzzy cover.
+
+    ``m`` is the fuzzifier (fuzziness exponent) of fuzzy c-means: ``m -> 1`` is
+    hard clustering, larger ``m`` gives softer memberships. The default ``2.0``
+    preserves the historical behavior used by the spectral-fuzzy initialization.
+    """
     try:
         import skfuzzy
     except ImportError as e:
@@ -253,7 +259,7 @@ def fuzzy_cover_from_fuzzycmeans(pointcloud, n_clusters, random_state=None):
             "(it is part of this package's optional 'extras')."
         ) from e
     _, fuzzy_clustering, _, _, _, _, _ = skfuzzy.cluster.cmeans(
-        pointcloud.T, n_clusters, 2, error=0.005, maxiter=1000, init=None,
+        pointcloud.T, n_clusters, m, error=0.005, maxiter=1000, init=None,
         seed=random_state,
     )
     return simplex_to_psimplex_numpy(fuzzy_clustering,p=float("inf"))
