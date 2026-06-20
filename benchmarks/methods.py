@@ -65,7 +65,7 @@ class ShapeDiscoverMethod(Method):
         regularization: float = 10.0,
         threshold: float = 0.5,
         label_mode: str = "components",
-        lite: bool = True,
+        lite: bool = False,  # full ShapeDiscover by default; Lite drops geometry/topology losses
         random_state: int | None = 0,
         layout_seed: int = 0,
         extra: dict | None = None,
@@ -190,6 +190,14 @@ class ShapeDiscoverMethod(Method):
         return int(self._survivors().sum())
 
     def params(self) -> dict:
+        # the loss weights actually used, for reproducibility: Lite is
+        # [1,0,0,reg]; full uses ShapeDiscover's default [1,10,1,10] unless
+        # overridden via extra["loss_weights"].
+        effective_loss_weights = (
+            [1, 0, 0, self.regularization]
+            if self.lite
+            else self.extra.get("loss_weights", [1, 10, 1, 10])
+        )
         return {
             "n_cover": self.n_cover,
             "knn": self.knn,
@@ -197,5 +205,6 @@ class ShapeDiscoverMethod(Method):
             "threshold": self.threshold,
             "label_mode": self.label_mode,
             "lite": self.lite,
+            "loss_weights": effective_loss_weights,
             **{f"extra.{k}": v for k, v in self.extra.items()},
         }

@@ -51,9 +51,13 @@ def main(argv=None) -> int:
     p.add_argument("--seeds", type=int, default=3, help="number of seeds (0..N-1)")
     p.add_argument("--n-cover", type=int, default=15)
     p.add_argument("--knn", type=int, default=15)
-    p.add_argument("--regularization", type=float, default=10.0)
+    p.add_argument("--regularization", type=float, default=10.0,
+                   help="(Lite only) regularization weight; ignored by the full ShapeDiscover default")
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--label-mode", default="components", choices=["components", "argmax"])
+    p.add_argument("--lite", action="store_true",
+                   help="use ShapeDiscoverLite (drops geometry/topology losses, faster) "
+                        "instead of the full ShapeDiscover default")
     p.add_argument("--tag", default="run", help="output filename stem")
     p.add_argument("--profile-memory", action="store_true",
                    help="record peak Python memory per phase (tracemalloc; adds overhead)")
@@ -77,6 +81,7 @@ def main(argv=None) -> int:
         regularization=args.regularization,
         threshold=args.threshold,
         label_mode=args.label_mode,
+        lite=args.lite,
     )
     out_csv = RESULTS_DIR / f"{args.tag}.csv"
 
