@@ -102,10 +102,35 @@ def _sphere(n: int, d: int, rng: np.random.Generator, noise: float = 0.0) -> np.
 
 
 def _torus(n: int, rng: np.random.Generator, r1: float = 1.0, r2: float = 0.5,
-           noise: float = 0.0) -> np.ndarray:
-    """``n`` points on a torus in R^3 (uniform in the two angles)."""
+           noise: float = 0.0, sampling: str = "angle") -> np.ndarray:
+    """``n`` points on a torus in R^3, tube radius ``r2`` and center radius ``r1``.
+
+    ``sampling`` controls the tube-angle distribution, which sets the *density*
+    while the embedding (hence the *curvature*) is fixed by ``r1``/``r2``:
+
+    - ``"angle"`` uniform in both angles (the historical default); denser on the
+      inner rim, where the tube circle is shorter.
+    - ``"area"`` uniform with respect to the Riemannian area, by rejection
+      sampling the tube angle with acceptance ``(r1 + r2 cos t2) / (r1 + r2)``.
+
+    Used to separate density from curvature (the donut diagnosis: area-uniform
+    resampling does *not* fix recovery, so the obstacle is curvature variation,
+    not density). The Gaussian curvature is ``cos t2 / (r2 (r1 + r2 cos t2))``,
+    so its range grows as the tube thins or fattens and is 0 only in the flat
+    (Clifford) torus; see ``clifford_torus``.
+    """
     t1 = rng.random(n) * 2 * np.pi
-    t2 = rng.random(n) * 2 * np.pi
+    if sampling == "area":
+        accepted = []
+        while len(accepted) < n:
+            cand = rng.random(n) * 2 * np.pi
+            keep = rng.random(n) < (r1 + r2 * np.cos(cand)) / (r1 + r2)
+            accepted.extend(cand[keep].tolist())
+        t2 = np.array(accepted[:n])
+    elif sampling == "angle":
+        t2 = rng.random(n) * 2 * np.pi
+    else:
+        raise ValueError(f"sampling must be 'angle' or 'area'; got {sampling!r}")
     x = (r1 + r2 * np.cos(t2)) * np.cos(t1)
     y = (r1 + r2 * np.cos(t2)) * np.sin(t1)
     z = r2 * np.sin(t2)
@@ -233,14 +258,22 @@ def _ds_sphere3(seed: int = 0, n: int = 1200, noise: float = 0.0) -> BenchmarkDa
 
 
 @register("torus")
-def _ds_torus(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDataset:
+def _ds_torus(seed: int = 0, n: int = 3000, noise: float = 0.0,
+              r1: float = 1.0, r2: float = 0.5,
+              sampling: str = "angle") -> BenchmarkDataset:
     # n=3000 (was 1500): the torus needs ~55+ points per cover element to
     # resolve [1,2,1]; at n_cover=52 the old 1500 (~29 pts/elt) was too sparse
     # to recover (see the synthetic-torus resolution in the project notes).
+    # r1/r2 (center/tube radius) and sampling (angle/area) are exposed so the
+    # curvature / density diagnosis is reproducible from load(): e.g.
+    # load("torus", r2=0.65) or load("torus", sampling="area"). The R^3 donut's
+    # hardness is curvature variation, not density (see the project notes); the
+    # flat counterpart is clifford_torus.
     rng = np.random.default_rng(seed)
     return BenchmarkDataset(
-        "torus", _torus(n, rng, noise=noise), target_betti=[1, 2, 1],
-        axes=(TOPOLOGY, EMBEDDING), metadata={"n": n, "noise": noise},
+        "torus", _torus(n, rng, r1=r1, r2=r2, noise=noise, sampling=sampling),
+        target_betti=[1, 2, 1], axes=(TOPOLOGY, EMBEDDING),
+        metadata={"n": n, "noise": noise, "r1": r1, "r2": r2, "sampling": sampling},
     )
 
 

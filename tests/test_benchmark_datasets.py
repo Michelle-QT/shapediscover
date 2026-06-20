@@ -39,6 +39,25 @@ def test_manifold_shape_and_betti(name):
     assert np.isfinite(ds.X).all()
 
 
+def test_torus_curvature_density_knobs():
+    # the r1/r2/sampling knobs (for the curvature/density diagnosis) must be
+    # reproducible from load() and leave the default torus unchanged.
+    default = datasets.load("torus", seed=0)
+    assert default.metadata["sampling"] == "angle"
+    assert default.metadata["r2"] == 0.5
+
+    fat = datasets.load("torus", seed=0, r2=0.65)
+    assert fat.metadata["r2"] == 0.65
+    assert fat.X.shape == default.X.shape
+
+    area = datasets.load("torus", seed=0, sampling="area")
+    assert area.metadata["sampling"] == "area"
+    assert area.X.shape[0] == default.X.shape[0]
+    # area-uniform concentrates fewer points on the inner rim than angle-uniform;
+    # the two samples must differ (not a no-op relabel).
+    assert not np.allclose(np.sort(area.X[:, 2]), np.sort(default.X[:, 2]))
+
+
 def test_ambient_embedding_is_isometric():
     # the R^50 clifford torus must have the same pairwise distances as the R^4 one
     # (a random rotation of a zero-padding), so its homology is unchanged.
