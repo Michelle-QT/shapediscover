@@ -156,9 +156,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # either set_function, pointcloud_nn, or graph_nn
         model: str = "set_function",
         simplex_p: int = 5,
-        # divide the geometry/regularity (Dirichlet) losses by the squared graph
-        # bandwidth so they are density-invariant (consistent across sample sizes)
-        density_normalize_losses: bool = False,
+        # divide the geometry/regularity (Dirichlet) losses by the graph bandwidth
+        # raised to this power, to make them less sample-size dependent (0 = off;
+        # the fixed-function Dirichlet value is 2 but overcorrects, see notes)
+        density_normalize_power: float = 0.0,
         # base map onto the simplex: "softmax" (dense nerve) or "sparsemax"
         # (compact-support cover, sparse nerve)
         partition_of_unity_map: str = "softmax",
@@ -191,7 +192,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.initialization_algorithm = initialization_algorithm
         self.model = model
         self.simplex_p = simplex_p
-        self.density_normalize_losses = density_normalize_losses
+        self.density_normalize_power = density_normalize_power
         self.partition_of_unity_map = partition_of_unity_map
         self.partition_of_unity_temperature = partition_of_unity_temperature
         self.inner_layer_widths = inner_layer_widths
@@ -508,7 +509,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         optimizer = self._make_optimizer(partition_of_unity, optimization_algorithm)
         loss_function = FuzzyCoverLossFunction(
             graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed,
-            density_normalize=self.density_normalize_losses,
+            density_normalize_power=self.density_normalize_power,
         )
         if self.early_stop:
             if self.early_stop_criterion == "relative_loss":
