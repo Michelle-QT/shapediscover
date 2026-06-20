@@ -50,11 +50,73 @@ def homology_recovery_quotient(intervals, target_betti, n_bins: int = 1000) -> f
     return float(np.mean(np.all(betti == target_betti, axis=1)))
 
 
+# Cap for "no competing bar", so dominance values stay finite and printable.
+_DOMINANCE_CAP = 1e3
+
+
+def bar_dominance(intervals, target_betti):
+    """Bar-based reading of how clearly the barcode shows ``target_betti``.
+
+    Complements the recovery quotient, which is harsh on short noise bars (it can
+    read near zero even when the right bars dominate). For each dimension ``d``
+    with target Betti number ``b_d``, sort that dimension's bar lengths
+    (persistences) decreasing, counting an infinite essential bar as longest. The
+    per-dimension dominance is the ratio of the ``b_d``-th longest bar to the
+    ``(b_d+1)``-th longest: large when the ``b_d`` expected features separate
+    cleanly from the rest, 0 when a required feature is missing. For ``b_d == 0``
+    it is instead ``(real-feature scale) / (longest bar in d)`` (large when the
+    dimension is empty of long bars as it should be). Values are capped at
+    ``_DOMINANCE_CAP`` (``inf`` -> cap). Returns ``(per_dim_list, min_over_dims)``;
+    the min is the weakest-recovered dimension, and ``>> 1`` means the whole
+    barcode reads as ``target_betti``.
+
+    v1 caveat: a dimension whose ``b_d`` longest bars include the essential
+    infinite bar (typically H0) is trivially capped and does not constrain the
+    min; penalizing spurious *finite* H0 components is a future refinement.
+    """
+    persistences = []
+    for pd in intervals:
+        persistences.append(np.sort(pd[:, 1] - pd[:, 0])[::-1] if len(pd) else np.array([]))
+
+    # reference scale: smallest finite "real" feature across dims with b_d >= 1.
+    real = [s[b - 1] for b, s in zip(target_betti, persistences)
+            if b >= 1 and len(s) >= b and np.isfinite(s[b - 1])]
+    ref = min(real) if real else float("inf")
+
+    per_dim = []
+    for b, s in zip(target_betti, persistences):
+        if b == 0:
+            if len(s) == 0:
+                dom = _DOMINANCE_CAP
+            elif not np.isfinite(s[0]):
+                dom = 0.0  # a spurious essential class in a should-be-empty dimension
+            elif s[0] <= 0 or not np.isfinite(ref):
+                dom = _DOMINANCE_CAP
+            else:
+                dom = ref / s[0]
+        elif len(s) < b:
+            dom = 0.0  # a required feature is missing
+        elif len(s) == b:
+            dom = _DOMINANCE_CAP  # exactly b bars, nothing competing
+        else:
+            nxt = s[b]
+            dom = _DOMINANCE_CAP if nxt <= 0 else s[b - 1] / nxt
+        per_dim.append(min(float(dom), _DOMINANCE_CAP))
+
+    overall = min(per_dim) if per_dim else _DOMINANCE_CAP
+    return per_dim, overall
+
+
 def topology_metrics(intervals, complex_size, target_betti, n_bins: int = 1000) -> dict:
-    return {
+    per_dim, overall = bar_dominance(intervals, target_betti)
+    out = {
         "recovery_quotient": homology_recovery_quotient(intervals, target_betti, n_bins),
         "complex_size": int(complex_size),
+        "bar_dominance_min": round(float(overall), 3),
     }
+    for d, v in enumerate(per_dim):
+        out[f"bar_dominance_h{d}"] = round(float(v), 3)
+    return out
 
 
 # --------------------------------------------------------------------------- #
