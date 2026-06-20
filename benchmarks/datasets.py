@@ -165,7 +165,10 @@ def _ds_sphere3(seed: int = 0, n: int = 1200, noise: float = 0.0) -> BenchmarkDa
 
 
 @register("torus")
-def _ds_torus(seed: int = 0, n: int = 1500, noise: float = 0.0) -> BenchmarkDataset:
+def _ds_torus(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDataset:
+    # n=3000 (was 1500): the torus needs ~55+ points per cover element to
+    # resolve [1,2,1]; at n_cover=52 the old 1500 (~29 pts/elt) was too sparse
+    # to recover (see the synthetic-torus resolution in the project notes).
     rng = np.random.default_rng(seed)
     return BenchmarkDataset(
         "torus", _torus(n, rng, noise=noise), target_betti=[1, 2, 1],
