@@ -37,6 +37,8 @@ DEFAULT_DATASETS = [
     "circle", "sphere2", "sphere3", "torus", "two_circles",
     # higher-dimensional / product manifolds (known Betti)
     "clifford_torus", "torus3", "s2_times_s1", "sphere4", "clifford_torus_amb50",
+    # topological negative control (no topology; must report [1,0,0])
+    "noise",
     # synthetic manifolds (embedding / DR)
     "swiss_roll", "s_curve",
     # classical clustering

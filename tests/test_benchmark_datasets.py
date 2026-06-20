@@ -39,6 +39,14 @@ def test_manifold_shape_and_betti(name):
     assert np.isfinite(ds.X).all()
 
 
+def test_noise_negative_control():
+    ds = datasets.load("noise", seed=0)
+    assert ds.target_betti == [1, 0, 0]
+    assert ds.metadata["negative_control"] is True
+    assert ds.X.shape == (1000, 10)
+    assert np.isfinite(ds.X).all()
+
+
 def test_torus_curvature_density_knobs():
     # the r1/r2/sampling knobs (for the curvature/density diagnosis) must be
     # reproducible from load() and leave the default torus unchanged.

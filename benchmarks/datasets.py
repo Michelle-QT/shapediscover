@@ -364,6 +364,24 @@ def _ds_clifford_torus_amb50(seed: int = 0, n: int = 3000, noise: float = 0.0,
     )
 
 
+@register("noise")
+def _ds_noise(seed: int = 0, n: int = 1000, dim: int = 10) -> BenchmarkDataset:
+    """Isotropic Gaussian point cloud in R^dim: a topological NEGATIVE CONTROL.
+
+    Structureless noise has no topology, so the target is ``[1, 0, 0]`` (one
+    component, no loops, no voids): a method that reports loops or voids here is
+    hallucinating features. Every topology-recovery number should be read against
+    this control. The high-dimensional setup follows the high-dimensional-PH
+    benchmark's noise control (NeurIPS 2024, arXiv:2311.03087).
+    """
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, dim))
+    return BenchmarkDataset(
+        "noise", X, target_betti=[1, 0, 0], axes=(TOPOLOGY,),
+        metadata={"n": n, "dim": dim, "negative_control": True},
+    )
+
+
 # ---- synthetic manifolds (embedding / DR; contractible, no interesting H) -- #
 
 @register("swiss_roll")
