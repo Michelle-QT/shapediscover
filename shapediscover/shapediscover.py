@@ -152,6 +152,11 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # either set_function, pointcloud_nn, or graph_nn
         model: str = "set_function",
         simplex_p: int = 5,
+        # base map onto the simplex: "softmax" (dense nerve) or "sparsemax"
+        # (compact-support cover, sparse nerve)
+        partition_of_unity_map: str = "softmax",
+        # sparsity knob for "sparsemax": larger keeps more cover elements per point
+        partition_of_unity_temperature: float = 1.0,
         inner_layer_widths: list[int] | None = None,
         n_eigenfunctions: int | None = None,
         learning_rate: float = 1e-1,
@@ -174,6 +179,8 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.initialization_algorithm = initialization_algorithm
         self.model = model
         self.simplex_p = simplex_p
+        self.partition_of_unity_map = partition_of_unity_map
+        self.partition_of_unity_temperature = partition_of_unity_temperature
         self.inner_layer_widths = inner_layer_widths
         self.n_eigenfunctions = n_eigenfunctions
         self.learning_rate = learning_rate
@@ -413,7 +420,11 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
                 self.n_cover,
                 inner_layer_widths=inner_layer_widths,
             )
-        return PartitionOfUnity(vector_valued_function)
+        return PartitionOfUnity(
+            vector_valued_function,
+            map_to_simplex=self.partition_of_unity_map,
+            temperature=self.partition_of_unity_temperature,
+        )
 
     def _make_optimizer(self, partition_of_unity, optimization_algorithm):
         if optimization_algorithm == "adam":

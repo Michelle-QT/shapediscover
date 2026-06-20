@@ -3,10 +3,37 @@ import torch.nn as nn
 import numpy as np
 
 
+def sparsemax(z, dim=0):
+    """Sparsemax (Martins and Astudillo, 2016): the Euclidean projection of ``z``
+    onto the probability simplex along ``dim``.
+
+    Like softmax it returns a partition of unity (sums to 1 along ``dim``), but
+    unlike softmax it is genuinely sparse (exact zeros). Used as an alternative
+    base map for the partition of unity so the induced fuzzy cover has compact
+    support: zeros propagate through the p-simplex normalization, so intersections
+    become genuinely empty and the nerve becomes genuinely sparse. Differentiable
+    via autograd through the sort / threshold (a valid (sub)gradient on each
+    support region).
+    """
+    z_sorted, _ = torch.sort(z, dim=dim, descending=True)
+    n = z.shape[dim]
+    rng = torch.arange(1, n + 1, device=z.device, dtype=z.dtype)
+    shape = [1] * z.dim()
+    shape[dim] = n
+    rng = rng.view(shape)
+    z_cumsum = z_sorted.cumsum(dim)
+    support = (1.0 + rng * z_sorted) > z_cumsum
+    k = support.to(z.dtype).sum(dim=dim, keepdim=True)
+    tau = (torch.gather(z_cumsum, dim, k.long() - 1) - 1.0) / k
+    return torch.clamp(z - tau, min=0.0)
+
+
 class PartitionOfUnity(torch.nn.Module):
     def __init__(
         self,
         model,
+        map_to_simplex="softmax",
+        temperature=1.0,
     ):
         """
             Implements an optimizable partition of unity built on top of an optimizable function.
@@ -15,13 +42,31 @@ class PartitionOfUnity(torch.nn.Module):
             ----------
 
             model : an optimizable function
+            map_to_simplex : str
+                The differentiable map onto the simplex: "softmax" (default, full
+                support, the dense nerve) or "sparsemax" (compact support, a
+                genuinely sparse cover and nerve).
+            temperature : float
+                Logits are divided by this before the map. For "sparsemax" it is
+                the sparsity knob: larger temperature keeps more cover elements per
+                point (denser, more overlap), smaller is sparser. 1.0 is plain
+                sparsemax / softmax.
 
         """
         super().__init__()
         self._model = model
+        if map_to_simplex not in ("softmax", "sparsemax"):
+            raise ValueError(
+                f"map_to_simplex must be 'softmax' or 'sparsemax'; got {map_to_simplex!r}."
+            )
+        self._map_to_simplex = map_to_simplex
+        self._temperature = temperature
 
     def forward(self):
-        return torch.softmax(self._model(), dim=0)
+        z = self._model() / self._temperature
+        if self._map_to_simplex == "sparsemax":
+            return sparsemax(z, dim=0)
+        return torch.softmax(z, dim=0)
 
 
 class PointCloudFunction(torch.nn.Module):
