@@ -125,6 +125,70 @@ def _disk(n: int, d: int, rng: np.random.Generator, noise: float = 0.0) -> np.nd
     return pts
 
 
+# Higher-dimensional / product manifolds with known homology, so the topology
+# axis is not over-fit to the single R^3 2-torus. Homology of products is the
+# tensor product of the factors' (Kuenneth); for products of spheres and circles
+# the Betti numbers are field-independent (orientable, torsion-free), so they
+# match gudhi's field-coefficient persistence. References: Hatcher, *Algebraic
+# Topology* (Kuenneth / products); the d-sphere / k-torus families follow the
+# tadasets (scikit-tda) and high-dimensional-PH-benchmark conventions.
+
+def _flat_torus(n: int, k: int, rng: np.random.Generator,
+                noise: float = 0.0) -> np.ndarray:
+    """``n`` points on the flat ``k``-torus ``(S^1)^k`` in ``R^{2k}``.
+
+    Each circle contributes ``(cos, sin)/sqrt(k)`` for a fixed radius; the angles
+    are uniform, which (unlike the curved R^3 donut) is genuinely uniform on the
+    flat torus. ``k=2`` is the Clifford torus. Betti numbers are the binomials
+    ``C(k, j)`` (``T^2``: ``[1,2,1]``; ``T^3``: ``[1,3,3,1]``).
+    """
+    angles = rng.random((n, k)) * 2 * np.pi
+    coords = []
+    scale = 1.0 / np.sqrt(k)
+    for j in range(k):
+        coords.append(scale * np.cos(angles[:, j]))
+        coords.append(scale * np.sin(angles[:, j]))
+    pts = np.stack(coords, axis=1)
+    if noise:
+        pts = pts + rng.normal(scale=np.sqrt(noise), size=pts.shape)
+    return pts
+
+
+def _sphere_times_circle(n: int, d: int, rng: np.random.Generator,
+                         noise: float = 0.0) -> np.ndarray:
+    """``n`` points on ``S^d x S^1`` in ``R^{d+3}`` (product of uniform samples).
+
+    Poincare polynomial ``(1+t^d)(1+t)``: for ``d=2`` the Betti numbers are
+    ``[1,1,1,1]`` (a connected component, one loop from the circle, one void from
+    the sphere, one 3-cycle from their product).
+    """
+    s = _sphere(n, d, rng)                      # (n, d+1)
+    theta = rng.random(n) * 2 * np.pi
+    c = np.stack([np.cos(theta), np.sin(theta)], axis=1)  # (n, 2)
+    pts = np.concatenate([s, c], axis=1)
+    if noise:
+        pts = pts + rng.normal(scale=np.sqrt(noise), size=pts.shape)
+    return pts
+
+
+def _embed_ambient(X: np.ndarray, ambient: int | None,
+                   rng: np.random.Generator) -> np.ndarray:
+    """Isometrically embed ``X`` (n, d) into ``R^ambient`` (d < ambient).
+
+    Zero-pads to ``ambient`` then applies a random rotation (QR of a Gaussian),
+    preserving all pairwise distances. Tests robustness to a high *ambient*
+    dimension while the intrinsic dimension and homology are unchanged (the
+    high-dimensional-PH benchmark convention).
+    """
+    d = X.shape[1]
+    if ambient is None or ambient <= d:
+        return X
+    Z = np.zeros((X.shape[0], ambient))
+    Z[:, :d] = X
+    Q, _ = np.linalg.qr(rng.standard_normal((ambient, ambient)))
+    return Z @ Q.T
+
+
 # --------------------------------------------------------------------------- #
 # Registry. Each factory takes (seed, **kwargs) and returns a BenchmarkDataset.
 # --------------------------------------------------------------------------- #
@@ -191,6 +255,79 @@ def _ds_two_circles(seed: int = 0, n: int = 400, noise: float = 0.0) -> Benchmar
     return BenchmarkDataset(
         "two_circles", X, labels=labels, target_betti=[2, 2],
         axes=(TOPOLOGY, CLUSTERING, EMBEDDING), metadata={"n": n, "noise": noise},
+    )
+
+
+# ---- higher-dimensional / product manifolds (topology axis, harder) -------- #
+
+@register("clifford_torus")
+def _ds_clifford_torus(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDataset:
+    """Flat 2-torus (S^1)^2 in R^4, Betti [1,2,1].
+
+    The curvature-free, uniformly-sampled counterpart of the R^3 donut ``torus``:
+    same topology, no inner/outer sampling-density distortion, so it isolates the
+    topology from the donut's geometry.
+    """
+    rng = np.random.default_rng(seed)
+    return BenchmarkDataset(
+        "clifford_torus", _flat_torus(n, 2, rng, noise), target_betti=[1, 2, 1],
+        axes=(TOPOLOGY,), metadata={"n": n, "noise": noise, "intrinsic_dim": 2},
+    )
+
+
+@register("torus3")
+def _ds_torus3(seed: int = 0, n: int = 4000, noise: float = 0.0) -> BenchmarkDataset:
+    """Flat 3-torus (S^1)^3 in R^6, Betti [1,3,3,1] (binomials C(3,j)).
+
+    Higher intrinsic dimension and higher Betti numbers than the 2-torus; the
+    natural stress test for whether the high-overlap regime generalizes.
+    """
+    rng = np.random.default_rng(seed)
+    return BenchmarkDataset(
+        "torus3", _flat_torus(n, 3, rng, noise), target_betti=[1, 3, 3, 1],
+        axes=(TOPOLOGY,), metadata={"n": n, "noise": noise, "intrinsic_dim": 3},
+    )
+
+
+@register("s2_times_s1")
+def _ds_s2_times_s1(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDataset:
+    """S^2 x S^1 in R^5, Betti [1,1,1,1] (Kuenneth of [1,0,1] and [1,1]).
+
+    A product with a loop, a void, and a 3-cycle: a different higher-dimensional
+    topology from the tori (mixed-degree homology).
+    """
+    rng = np.random.default_rng(seed)
+    return BenchmarkDataset(
+        "s2_times_s1", _sphere_times_circle(n, 2, rng, noise), target_betti=[1, 1, 1, 1],
+        axes=(TOPOLOGY,), metadata={"n": n, "noise": noise, "intrinsic_dim": 3},
+    )
+
+
+@register("sphere4")
+def _ds_sphere4(seed: int = 0, n: int = 2000, noise: float = 0.0) -> BenchmarkDataset:
+    """S^4 in R^5, Betti [1,0,0,0,1] (a single 4-void)."""
+    rng = np.random.default_rng(seed)
+    return BenchmarkDataset(
+        "sphere4", _sphere(n, 4, rng, noise), target_betti=[1, 0, 0, 0, 1],
+        axes=(TOPOLOGY,), metadata={"n": n, "noise": noise, "intrinsic_dim": 4},
+    )
+
+
+@register("clifford_torus_amb50")
+def _ds_clifford_torus_amb50(seed: int = 0, n: int = 3000, noise: float = 0.0,
+                             ambient: int = 50) -> BenchmarkDataset:
+    """Flat 2-torus isometrically embedded in R^50, Betti [1,2,1].
+
+    Same intrinsic torus, high ambient dimension: tests robustness to ambient
+    dimension / distance concentration (the high-dimensional-PH benchmark setup)
+    without changing the homology.
+    """
+    rng = np.random.default_rng(seed)
+    X = _embed_ambient(_flat_torus(n, 2, rng, noise), ambient, rng)
+    return BenchmarkDataset(
+        "clifford_torus_amb50", X, target_betti=[1, 2, 1],
+        axes=(TOPOLOGY,), metadata={"n": n, "noise": noise, "ambient": ambient,
+                                    "intrinsic_dim": 2},
     )
 
 

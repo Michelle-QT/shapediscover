@@ -35,6 +35,8 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 DEFAULT_DATASETS = [
     # topology (known Betti)
     "circle", "sphere2", "sphere3", "torus", "two_circles",
+    # higher-dimensional / product manifolds (known Betti)
+    "clifford_torus", "torus3", "s2_times_s1", "sphere4", "clifford_torus_amb50",
     # synthetic manifolds (embedding / DR)
     "swiss_roll", "s_curve",
     # classical clustering
