@@ -19,9 +19,26 @@ class FuzzyCoverLossFunction:
         probabilities=None,
         log=False,
         random_state=None,
+        density_normalize=False,
     ):
         # instance-local RNG for the stochastic loss sampling (no global side effect)
         self._rng = np.random.default_rng(random_state)
+
+        # Density normalization of the Dirichlet-energy losses (geometry,
+        # regularity): divide by the squared graph bandwidth h^2 so that
+        # mean((phi_a - phi_b)/h)^2 estimates |grad phi|^2 (density-invariant).
+        # Without it those losses shrink as the manifold is sampled more densely
+        # (the per-edge differences shrink), tilting the measure-vs-regularity
+        # balance with n. 1.0 (off) reproduces the historical behavior.
+        self._inv_bandwidth_sq = 1.0
+        if density_normalize:
+            h = graph.bandwidth() if hasattr(graph, "bandwidth") else None
+            if h is None or h <= 0:
+                raise ValueError(
+                    "density_normalize requires a graph with a positive bandwidth; "
+                    "build it with graph_from_pointcloud."
+                )
+            self._inv_bandwidth_sq = 1.0 / (h ** 2)
 
         number_of_losses = 4
         if weights is None:
@@ -100,7 +117,7 @@ class FuzzyCoverLossFunction:
 
     def _geometry_loss(self, pou):
         n_pou_functions = pou.shape[0]
-        return torch.sum(
+        return self._inv_bandwidth_sq * torch.sum(
             torch.pow(
                 torch.norm(
                     (pou @ self._coboundary_matrix.T) * self._edge_weights, p=1, dim=1
@@ -131,7 +148,7 @@ class FuzzyCoverLossFunction:
 
     def _regularization_loss(self, pou):
         n_pou_functions = pou.shape[0]
-        return torch.sum(
+        return self._inv_bandwidth_sq * torch.sum(
             torch.pow(pou @ self._coboundary_matrix.T, 2) * self._edge_weights
         ) / (self._total_edge_weight * n_pou_functions)
 

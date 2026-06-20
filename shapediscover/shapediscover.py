@@ -156,6 +156,9 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # either set_function, pointcloud_nn, or graph_nn
         model: str = "set_function",
         simplex_p: int = 5,
+        # divide the geometry/regularity (Dirichlet) losses by the squared graph
+        # bandwidth so they are density-invariant (consistent across sample sizes)
+        density_normalize_losses: bool = False,
         # base map onto the simplex: "softmax" (dense nerve) or "sparsemax"
         # (compact-support cover, sparse nerve)
         partition_of_unity_map: str = "softmax",
@@ -185,6 +188,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.initialization_algorithm = initialization_algorithm
         self.model = model
         self.simplex_p = simplex_p
+        self.density_normalize_losses = density_normalize_losses
         self.partition_of_unity_map = partition_of_unity_map
         self.partition_of_unity_temperature = partition_of_unity_temperature
         self.inner_layer_widths = inner_layer_widths
@@ -496,7 +500,8 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         """Run the main optimization minimizing the fuzzy-cover loss."""
         optimizer = self._make_optimizer(partition_of_unity, optimization_algorithm)
         loss_function = FuzzyCoverLossFunction(
-            graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed
+            graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed,
+            density_normalize=self.density_normalize_losses,
         )
         if self.early_stop:
             early_stopper = GradientEarlyStopper(

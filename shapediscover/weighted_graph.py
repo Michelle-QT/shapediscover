@@ -9,7 +9,8 @@ from sklearn.decomposition import TruncatedSVD
 
 class WeightedGraph:
     def __init__(
-        self, adjacency_matrix, flat_neighbors=None, flat_neighbors_start_end=None
+        self, adjacency_matrix, flat_neighbors=None, flat_neighbors_start_end=None,
+        bandwidth=None,
     ):
         """
         Assumptions:
@@ -19,10 +20,20 @@ class WeightedGraph:
         ``flat_neighbors`` / ``flat_neighbors_start_end`` optionally provide a
         precomputed adjacency list (see ``efficient_adjacency_list``); when
         omitted it is derived from the adjacency matrix on first use.
+
+        ``bandwidth`` is a length scale of the neighborhood graph (the median
+        neighbor distance); it is used to make the Dirichlet-energy losses
+        (geometry, regularity) density-invariant by dividing by ``bandwidth**2``
+        (so ``mean((phi_a - phi_b)/h)**2`` estimates ``|grad phi|**2``). ``None``
+        when the graph was not built from a point cloud.
         """
         self._adjacency_matrix = adjacency_matrix
         self.flat_neighbors_ = flat_neighbors
         self.flat_neighbors_start_end_ = flat_neighbors_start_end
+        self._bandwidth = bandwidth
+
+    def bandwidth(self):
+        return self._bandwidth
 
     def adjacency_matrix(self):
         return self._adjacency_matrix
@@ -207,9 +218,14 @@ def graph_from_pointcloud(
     delta=1.0, cknn_weighted=False,
 ):
     n_points = pointcloud.shape[0]
+    # bandwidth: the median neighbor distance, a length scale used to make the
+    # Dirichlet-energy losses density-invariant (see WeightedGraph.bandwidth);
+    # each branch fills it from the neighbor distances it already computes.
+    bandwidth = None
     if algorithm == "knn":
         ball_tree = BallTree(pointcloud, metric=metric)
-        _, neighbor_indices = ball_tree.query(pointcloud, n_neighbors)
+        neighbor_distances, neighbor_indices = ball_tree.query(pointcloud, n_neighbors)
+        bandwidth = float(np.median(neighbor_distances[:, 1:]))  # col 0 is self (0)
         adjacency_matrix = sp.sparse.lil_array((n_points, n_points))
         for i in range(n_points):
             adjacency_matrix[i, neighbor_indices[i]] = 1
@@ -224,17 +240,16 @@ def graph_from_pointcloud(
         adjacency_matrix, _, _ = umap.umap_.fuzzy_simplicial_set(
             pointcloud, n_neighbors, random_state=random_state, metric=metric
         )
-        flat_neighbors = np.array(
-            umap.umap_.nearest_neighbors(
-                pointcloud,
-                n_neighbors,
-                metric=metric,
-                metric_kwds={},
-                angular=False,
-                random_state=random_state,
-            )[0],
-            dtype=int,
-        ).flatten()
+        knn_indices, knn_distances, _ = umap.umap_.nearest_neighbors(
+            pointcloud,
+            n_neighbors,
+            metric=metric,
+            metric_kwds={},
+            angular=False,
+            random_state=random_state,
+        )
+        bandwidth = float(np.median(knn_distances[:, 1:]))  # col 0 is self (0)
+        flat_neighbors = np.array(knn_indices, dtype=int).flatten()
 
     elif algorithm == "cknn":
         # Continuous k-NN (Berry and Sauer, 2019): connect i, j iff
@@ -251,6 +266,7 @@ def graph_from_pointcloud(
         nn = NearestNeighbors(n_neighbors=n_candidates + 1, metric=metric).fit(pointcloud)
         cand_dists, cand_idx = nn.kneighbors(pointcloud)  # column 0 is the point itself
         d_k = cand_dists[:, n_neighbors]  # distance to the k-th neighbor (col 0 = self)
+        bandwidth = float(np.median(cand_dists[:, 1 : n_neighbors + 1]))
         src = np.repeat(np.arange(n_points), n_candidates)
         dst = cand_idx[:, 1:].ravel()
         dd = cand_dists[:, 1:].ravel()
@@ -293,7 +309,7 @@ def graph_from_pointcloud(
     # Variable-degree graphs (cknn) have no uniform-stride flat adjacency list, so
     # let WeightedGraph derive it from the adjacency matrix on first use.
     if flat_neighbors is None:
-        return WeightedGraph(adjacency_matrix)
+        return WeightedGraph(adjacency_matrix, bandwidth=bandwidth)
 
     # the flat adjacency list is stored with a uniform stride of n_neighbors
     # NOTE: each vertex's knn block includes the vertex itself (at position 0)
@@ -312,5 +328,6 @@ def graph_from_pointcloud(
         adjacency_matrix,
         flat_neighbors=flat_neighbors,
         flat_neighbors_start_end=flat_neighbors_start_end,
+        bandwidth=bandwidth,
     )
 
