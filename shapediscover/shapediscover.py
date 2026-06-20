@@ -149,6 +149,8 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         graph_algorithm: str = "umap",
         # connectivity threshold for the "cknn" graph (Berry-Sauer); ignored otherwise
         cknn_delta: float = 1.0,
+        # weight "cknn" edges by a self-tuning Gaussian kernel (vs unweighted 0/1)
+        cknn_weighted: bool = False,
         # either random, kmeans, spectral_clustering, or spectral_fuzzy_clustering
         initialization_algorithm: str = "spectral_clustering",
         # either set_function, pointcloud_nn, or graph_nn
@@ -179,6 +181,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.loss_weights = loss_weights
         self.graph_algorithm = graph_algorithm
         self.cknn_delta = cknn_delta
+        self.cknn_weighted = cknn_weighted
         self.initialization_algorithm = initialization_algorithm
         self.model = model
         self.simplex_p = simplex_p
@@ -335,6 +338,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             algorithm=self.graph_algorithm,
             random_state=seed,
             delta=self.cknn_delta,
+            cknn_weighted=self.cknn_weighted,
         )
         if self.verbose:
             print("time create graph", time.time() - time_start)

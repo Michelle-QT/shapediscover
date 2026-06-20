@@ -204,7 +204,7 @@ class WeightedGraph:
 
 def graph_from_pointcloud(
     pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None,
-    delta=1.0,
+    delta=1.0, cknn_weighted=False,
 ):
     n_points = pointcloud.shape[0]
     if algorithm == "knn":
@@ -264,6 +264,18 @@ def graph_from_pointcloud(
         )
         adjacency_matrix.data[:] = 1.0  # csr summed duplicate candidate/floor edges
         adjacency_matrix = adjacency_matrix.maximum(adjacency_matrix.T)  # symmetric 0/1
+        if cknn_weighted:
+            # self-tuning Gaussian weights (Zelnik-Manor and Perona) on the CkNN
+            # connectivity: w(i,j) = exp(-d(i,j)^2 / (d_k(i) d_k(j))). The fixed
+            # and adaptive *unweighted* graphs both fail the tori while the
+            # weighted umap graph recovers them, so the weights are what matter.
+            coo = adjacency_matrix.tocoo()
+            diff = pointcloud[coo.row] - pointcloud[coo.col]
+            dij2 = np.einsum("ij,ij->i", diff, diff)
+            w = np.exp(-dij2 / (d_k[coo.row] * d_k[coo.col]))
+            adjacency_matrix = sp.sparse.csr_matrix(
+                (w, (coo.row, coo.col)), shape=(n_points, n_points)
+            )
         flat_neighbors = None  # variable degree: derive the adjacency list from the matrix
 
     else:
