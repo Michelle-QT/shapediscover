@@ -52,7 +52,7 @@ class AlphaComplexMethod(Method):
     name = "alpha"
     provides = ("topology",)
 
-    def __init__(self, n_landmarks: int | None = 400, max_ambient_dim: int = 10,
+    def __init__(self, n_landmarks: int | None = 400, max_ambient_dim: int = 6,
                  random_state: int | None = 0, **_):
         self.n_landmarks = n_landmarks
         self.max_ambient_dim = max_ambient_dim
