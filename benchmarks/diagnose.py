@@ -169,6 +169,75 @@ def diagnose_evolution(name, *, n_cover, knn, seed, out_dir, figures, lines):
     return ev
 
 
+# Each dataset's natural cover size (validated in the diagnostics): the torus
+# needs the fine n_cover=52, the simple manifolds far fewer. Used by the
+# multi-seed evolution so the monotone-vs-non-monotone contrast is not confounded
+# by running the controls at the torus's (over-fine) cover size.
+NATURAL_N_COVER = {"torus": 52, "circle": 12, "sphere2": 24, "sphere3": 24,
+                   "two_circles": 24}
+
+
+def diagnose_multiseed_evolution(name, *, knn, seeds, n_cover=None, n_snapshots=12,
+                                 n_max_iter=250, out_dir, figures, lines):
+    """Confirm the optimization-evolution shape across independent seeds.
+
+    Each seed draws an independent point cloud (data seed) and an independent fit
+    (model ``random_state``), so the band spans the realistic sample-to-sample +
+    optimization variance. Reports per-seed peak/decline and the median trajectory
+    with a min/max band.
+    """
+    ncov = n_cover or NATURAL_N_COVER.get(name, 52)
+    evolutions = []
+    for s in seeds:
+        ds = ds_mod.load(name, seed=s)
+        ev = cd.optimization_evolution(ds.X, ds.target_betti, n_cover=ncov, knn=knn,
+                                       random_state=s, n_snapshots=n_snapshots,
+                                       n_max_iter=n_max_iter)
+        evolutions.append(ev)
+    agg = cd.aggregate_evolution(evolutions)
+
+    lines.append(f"## {name}: multi-seed optimization evolution "
+                 f"(n_cover={ncov}, seeds={list(seeds)}, early stop off)\n")
+    lines.append(f"- over-optimizing seeds (interior recovery peak, then decline "
+                 f">0.05): {agg['n_over_optimizing']} / {agg['n_seeds']}")
+    lines.append("- per seed: peak_iter / peak_recovery / final_recovery / "
+                 "n_active start->end")
+    for i, s in zip(seeds, agg["per_seed"]):
+        lines.append(f"  - seed {i}: peak@{s['peak_iteration']} "
+                     f"{s['peak_recovery']:.3f} -> final {s['final_recovery']:.3f} "
+                     f"(decline {s['decline_from_peak']:+.3f}), "
+                     f"active {s['n_active_start']}->{s['n_active_end']}"
+                     f"{'  [OVER-OPT]' if s['over_optimizes'] else ''}")
+    lines.append("\n| iter | recovery median [min, max] | n_active median |")
+    lines.append("|---|---|---|")
+    for r in agg["per_iteration"]:
+        lines.append(f"| {r['iteration']} | {r['recovery_median']:.3f} "
+                     f"[{r['recovery_min']:.3f}, {r['recovery_max']:.3f}] | "
+                     f"{r['n_active_median']:.0f} |")
+    lines.append("")
+
+    if figures:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        it = [r["iteration"] for r in agg["per_iteration"]]
+        med = [r["recovery_median"] for r in agg["per_iteration"]]
+        lo = [r["recovery_min"] for r in agg["per_iteration"]]
+        hi = [r["recovery_max"] for r in agg["per_iteration"]]
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.fill_between(it, lo, hi, alpha=0.25, label="min-max band")
+        ax.plot(it, med, "o-", label="median")
+        ax.set_xlabel("iteration")
+        ax.set_ylabel("recovery quotient")
+        ax.set_title(f"{name}: recovery vs iteration "
+                     f"({agg['n_seeds']} seeds, n_cover={ncov})")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out_dir / f"{name}_multiseed_evolution.png", dpi=110)
+        plt.close(fig)
+    return agg
+
+
 def diagnose_n_cover(name, *, knn, seed, n_covers, lines):
     ds = ds_mod.load(name, seed=seed)
     target = ds.target_betti
@@ -198,6 +267,9 @@ def main(argv=None):
     parser.add_argument("--n-cover-sweep", action="store_true",
                         help="also run the n_cover sweep on the target")
     parser.add_argument("--n-covers", nargs="+", type=int, default=[20, 35, 52, 75])
+    parser.add_argument("--multiseed", type=int, default=0, metavar="N",
+                        help="run the optimization-evolution across N independent "
+                             "seeds for every dataset (each at its natural n_cover)")
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = parser.parse_args(argv)
 
@@ -211,6 +283,20 @@ def main(argv=None):
 
     lines = ["# Cover diagnostics report\n",
              f"target + controls: {', '.join(args.datasets)}\n"]
+
+    if args.multiseed:
+        # multi-seed evolution is the standalone confirmation mode: each dataset at
+        # its natural cover size, across N independent seeds.
+        seeds = tuple(range(args.multiseed))
+        for name in args.datasets:
+            diagnose_multiseed_evolution(name, knn=args.knn, seeds=seeds,
+                                         out_dir=out_dir, figures=figures, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_multiseed.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
     for name in args.datasets:
         diagnose_dataset(name, n_cover=args.n_cover, knn=args.knn, seed=args.seed,
                          figures=figures, out_dir=out_dir, lines=lines)

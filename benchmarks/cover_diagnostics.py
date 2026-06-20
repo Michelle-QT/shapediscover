@@ -465,6 +465,64 @@ def optimization_evolution(X, target_betti, *, n_cover=52, knn=15, n_snapshots=1
     return {"rows": rows, "n_max_iter": n_max_iter}
 
 
+def aggregate_evolution(evolutions: list[dict]) -> dict:
+    """Aggregate several :func:`optimization_evolution` runs (same iteration grid).
+
+    Each run is one independent seed (data + model). Returns per-iteration median
+    and min/max/IQR of the recovery quotient and active-element count, plus a
+    per-seed shape classification: each trajectory's peak iteration, peak vs final
+    recovery, whether the peak is interior (over-optimization) or at convergence
+    (monotone improvement), and the active-element count at start vs end. The
+    headline summary counts how many seeds over-optimize (an interior peak with a
+    meaningful decline) vs improve to convergence.
+    """
+    rows_per_seed = [ev["rows"] for ev in evolutions]
+    n_iters = min(len(r) for r in rows_per_seed)
+    per_iteration = []
+    for i in range(n_iters):
+        rq = np.array([rows[i]["recovery_quotient"] for rows in rows_per_seed])
+        na = np.array([rows[i]["n_active"] for rows in rows_per_seed])
+        per_iteration.append({
+            "iteration": int(rows_per_seed[0][i]["iteration"]),
+            "recovery_median": float(np.median(rq)),
+            "recovery_min": float(rq.min()),
+            "recovery_max": float(rq.max()),
+            "recovery_q25": float(np.quantile(rq, 0.25)),
+            "recovery_q75": float(np.quantile(rq, 0.75)),
+            "n_active_median": float(np.median(na)),
+            "n_active_min": int(na.min()),
+            "n_active_max": int(na.max()),
+        })
+
+    per_seed = []
+    for rows in rows_per_seed:
+        rq = np.array([r["recovery_quotient"] for r in rows])
+        na = np.array([r["n_active"] for r in rows])
+        peak_idx = int(np.argmax(rq))
+        last_idx = len(rq) - 1
+        decline = float(rq[peak_idx] - rq[-1])
+        # over-optimization = a clearly interior peak that then loses recovery;
+        # the 0.05 margin guards against flat / noise-level wiggles.
+        interior_peak = bool(peak_idx < last_idx - 1)
+        per_seed.append({
+            "peak_iteration": int(rows[peak_idx]["iteration"]),
+            "peak_recovery": float(rq[peak_idx]),
+            "final_recovery": float(rq[-1]),
+            "decline_from_peak": decline,
+            "over_optimizes": bool(interior_peak and decline > 0.05),
+            "n_active_start": int(na[0]),
+            "n_active_end": int(na[-1]),
+        })
+
+    n_over = sum(s["over_optimizes"] for s in per_seed)
+    return {
+        "per_iteration": per_iteration,
+        "per_seed": per_seed,
+        "n_seeds": len(per_seed),
+        "n_over_optimizing": int(n_over),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # n_cover sweep
 # --------------------------------------------------------------------------- #

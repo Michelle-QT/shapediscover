@@ -112,3 +112,26 @@ def test_finalize_cover_is_pinf_normalized(fitted):
     finalized = cd.finalize_cover_internal(cover)
     # p=inf normalization: each point's max membership over cover elements is 1
     assert np.allclose(finalized.max(axis=0), 1.0)
+
+
+def test_aggregate_evolution_classifies_shapes():
+    # pure-function test (no fitting): one over-optimizing trajectory (interior
+    # peak then large decline) and one monotone-improving one.
+    def ev(recoveries, actives):
+        return {"rows": [{"iteration": 10 * i, "recovery_quotient": r, "n_active": a,
+                          "bar_dominance_min": 1.0, "best_slice_betti": [1],
+                          "per_dimension": []}
+                         for i, (r, a) in enumerate(zip(recoveries, actives))]}
+
+    over = ev([0.0, 0.5, 0.6, 0.3, 0.1], [10, 10, 9, 8, 7])      # peaks at idx 2
+    mono = ev([0.0, 0.2, 0.4, 0.5, 0.6], [10, 10, 10, 10, 10])   # peaks at the end
+    agg = cd.aggregate_evolution([over, mono])
+
+    assert agg["n_seeds"] == 2
+    assert agg["n_over_optimizing"] == 1
+    assert agg["per_seed"][0]["over_optimizes"] is True
+    assert agg["per_seed"][0]["peak_iteration"] == 20
+    assert agg["per_seed"][1]["over_optimizes"] is False
+    # per-iteration median is computed over both seeds
+    assert agg["per_iteration"][0]["recovery_median"] == pytest.approx(0.0)
+    assert agg["per_iteration"][2]["recovery_median"] == pytest.approx(0.5)
