@@ -46,6 +46,23 @@ from .metrics import bar_dominance, homology_recovery_quotient
 # Cover finalization
 # --------------------------------------------------------------------------- #
 
+def mean_participation_ratio(cover_internal: np.ndarray) -> float:
+    """Mean per-point overlap: the effective number of cover elements per point.
+
+    For each point the participation ratio ``(sum_a phi_a)^2 / sum_a phi_a^2`` is
+    the effective number of elements it belongs to (1 for a one-hot / hard
+    assignment, ``k`` for ``k`` equal memberships). The mean over points is a
+    scale-free summary of how much the cover overlaps; optimization drives it down
+    (the cover sharpens), and each topology has an overlap level at which its nerve
+    is faithful.
+    """
+    f = np.asarray(cover_internal, dtype=float)
+    s1 = f.sum(axis=0)
+    s2 = (f ** 2).sum(axis=0)
+    s2 = np.where(s2 == 0, 1.0, s2)
+    return float(np.mean(s1 ** 2 / s2))
+
+
 def finalize_cover_internal(precover_internal: np.ndarray) -> np.ndarray:
     """Apply the final ``p=inf`` normalization to an internal-orientation cover.
 
@@ -454,12 +471,15 @@ def optimization_evolution(X, target_betti, *, n_cover=52, knn=15, n_snapshots=1
         rec = filtration_recovery(cover, target_betti, filtration="birth",
                                   max_dimension=max_dimension)
         iteration = i * step if i < len(est.historical_outputs_) else n_max_iter
+        window = rec["trajectory"].get("window")
         rows.append({
             "iteration": int(iteration),
             "n_active": struct["n_active"],
             "recovery_quotient": rec["recovery_quotient"],
             "bar_dominance_min": rec["bar_dominance_min"],
             "best_slice_betti": rec["trajectory"].get("best_slice_betti"),
+            "overlap_pr": mean_participation_ratio(cover),
+            "window_width": (window[1] - window[0]) if window else 0.0,
             "per_dimension": struct["per_dimension"],
         })
     return {"rows": rows, "n_max_iter": n_max_iter}

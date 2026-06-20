@@ -174,7 +174,8 @@ def diagnose_evolution(name, *, n_cover, knn, seed, out_dir, figures, lines):
 # multi-seed evolution so the monotone-vs-non-monotone contrast is not confounded
 # by running the controls at the torus's (over-fine) cover size.
 NATURAL_N_COVER = {"torus": 52, "circle": 12, "sphere2": 24, "sphere3": 24,
-                   "two_circles": 24}
+                   "two_circles": 24, "clifford_torus": 52, "sphere4": 32,
+                   "torus3": 64, "s2_times_s1": 40}
 
 
 def diagnose_multiseed_evolution(name, *, knn, seeds, n_cover=None, n_snapshots=12,
@@ -238,6 +239,52 @@ def diagnose_multiseed_evolution(name, *, knn, seeds, n_cover=None, n_snapshots=
     return agg
 
 
+def diagnose_weight_sweep(name, *, knn, seed, n_cover=None, weight_grid=None,
+                          n_snapshots=10, n_max_iter=250, lines):
+    """Experiment #1: does rebalancing measure vs regularity fix over-optimization?
+
+    For each ``(measure, regularity)`` weight pair (geometry and topology held at
+    0 to isolate the two drivers), replay the fit with early stop off and read the
+    evolution *shape*: whether recovery has an interior peak that then declines
+    (over-optimization, the good cover is a transient) or improves to convergence
+    (the good cover is a near-minimizer). Also reports the convergent overlap
+    (participation ratio) and the filtration-window width (the
+    disconnected->connected span over which the target topology holds, the user's
+    framing). If raising regularity removes the interior peak and lands the
+    convergent overlap at the recovery optimum, reweighting is a fix; if the peak
+    persists at every balance, the objective itself needs a topology-aware term.
+    """
+    ncov = n_cover or NATURAL_N_COVER.get(name, 52)
+    grid = weight_grid or [(1, 10), (1, 20), (1, 40), (1, 80), (0.5, 10), (2, 10)]
+    ds = ds_mod.load(name, seed=seed)
+    target = ds.target_betti
+
+    lines.append(f"## {name}: measure/regularity sweep "
+                 f"(n_cover={ncov}, seed={seed}, geometry=topology=0, early stop off)\n")
+    lines.append("| measure | reg | peak rec @iter | final rec | peak PR | final PR "
+                 "| final window | shape |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for measure, reg in grid:
+        ev = cd.optimization_evolution(
+            ds.X, target, n_cover=ncov, knn=knn, random_state=seed,
+            n_snapshots=n_snapshots, n_max_iter=n_max_iter,
+            extra={"loss_weights": [measure, 0, 0, reg]},
+        )
+        agg = cd.aggregate_evolution([ev])
+        s = agg["per_seed"][0]
+        rows = ev["rows"]
+        final_pr = rows[-1]["overlap_pr"]
+        peak_idx = int(np.argmax([r["recovery_quotient"] for r in rows]))
+        peak_pr = rows[peak_idx]["overlap_pr"]
+        final_window = rows[-1]["window_width"]
+        shape = "OVER-OPT (transient)" if s["over_optimizes"] else "monotone-ish"
+        lines.append(
+            f"| {measure} | {reg} | {s['peak_recovery']:.3f} @{s['peak_iteration']} "
+            f"| {s['final_recovery']:.3f} | {peak_pr:.2f} | {final_pr:.2f} "
+            f"| {final_window:.2f} | {shape} |")
+    lines.append("")
+
+
 def diagnose_n_cover(name, *, knn, seed, n_covers, lines):
     ds = ds_mod.load(name, seed=seed)
     target = ds.target_betti
@@ -270,6 +317,9 @@ def main(argv=None):
     parser.add_argument("--multiseed", type=int, default=0, metavar="N",
                         help="run the optimization-evolution across N independent "
                              "seeds for every dataset (each at its natural n_cover)")
+    parser.add_argument("--weight-sweep", action="store_true",
+                        help="run the measure/regularity weight sweep (experiment #1) "
+                             "on every dataset at its natural n_cover")
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = parser.parse_args(argv)
 
@@ -293,6 +343,15 @@ def main(argv=None):
                                          out_dir=out_dir, figures=figures, lines=lines)
         report = "\n".join(lines)
         (out_dir / "report_multiseed.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.weight_sweep:
+        for name in args.datasets:
+            diagnose_weight_sweep(name, knn=args.knn, seed=args.seed, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_weight_sweep.md").write_text(report)
         print(report)
         print(f"\n[diagnostics written to {out_dir}]")
         return
