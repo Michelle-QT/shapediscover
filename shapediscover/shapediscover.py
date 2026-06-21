@@ -168,6 +168,12 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # strength of the curvature weighting in [0, 1] (0 = uniform); only used
         # when measure_weighting="curvature".
         measure_weighting_strength: float = 1.0,
+        # per-edge curvature redistribution of the regularity (Dirichlet) loss:
+        # "uniform" (default) or "curvature" (strengthen smoothness where the
+        # manifold bends, with the total regularity budget preserved; aimed at the
+        # over-sharpening that breaks inhomogeneous manifolds like the R^3 donut).
+        regularity_weighting: str = "uniform",
+        regularity_weighting_strength: float = 1.0,
         # base map onto the simplex: "softmax" (dense nerve) or "sparsemax"
         # (compact-support cover, sparse nerve)
         partition_of_unity_map: str = "softmax",
@@ -203,6 +209,8 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.density_normalize_power = density_normalize_power
         self.measure_weighting = measure_weighting
         self.measure_weighting_strength = measure_weighting_strength
+        self.regularity_weighting = regularity_weighting
+        self.regularity_weighting_strength = regularity_weighting_strength
         self.partition_of_unity_map = partition_of_unity_map
         self.partition_of_unity_temperature = partition_of_unity_temperature
         self.inner_layer_widths = inner_layer_widths
@@ -282,8 +290,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.graph_ = graph
         n_points = graph.n_vertices()
 
-        # optional curvature-adaptive measure weighting (default off / uniform)
+        # optional curvature-adaptive weighting of the measure / regularity losses
+        # (both default off / uniform)
         self._measure_point_weights = self._compute_measure_weights(X, graph)
+        self._regularity_point_weights = self._compute_regularity_weights(X, graph)
 
         clustering, laplacian_eigenmaps = self._initialize_precover(
             X, graph, n_eigenfunctions, next_seed
@@ -383,6 +393,25 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             X, graph.adjacency_matrix(),
             strength=self.measure_weighting_strength, bandwidth=graph.bandwidth(),
             invert=(self.measure_weighting == "curvature_inverse"),
+        )
+
+    def _compute_regularity_weights(self, X, graph):
+        """Per-point curvature weights for the (optional) Dirichlet redistribution.
+
+        Returns ``None`` for the default uniform regularity (bit-identical), or a
+        mean-1 per-point curvature vector that the loss maps to per-edge weights
+        and renormalizes so the total regularity budget is preserved.
+        """
+        if self.regularity_weighting == "uniform":
+            return None
+        if self.regularity_weighting != "curvature":
+            raise ValueError(
+                "regularity_weighting must be 'uniform' or 'curvature'; "
+                f"got {self.regularity_weighting!r}."
+            )
+        return curvature_measure_weights(
+            X, graph.adjacency_matrix(),
+            strength=self.regularity_weighting_strength, bandwidth=graph.bandwidth(),
         )
 
     def _initialize_precover(self, X, graph, n_eigenfunctions, next_seed):
@@ -543,6 +572,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed,
             density_normalize_power=self.density_normalize_power,
             measure_point_weights=getattr(self, "_measure_point_weights", None),
+            regularity_point_weights=getattr(self, "_regularity_point_weights", None),
         )
         if self.early_stop:
             if self.early_stop_criterion == "relative_loss":

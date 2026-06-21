@@ -21,6 +21,7 @@ class FuzzyCoverLossFunction:
         random_state=None,
         density_normalize_power=0.0,
         measure_point_weights=None,
+        regularity_point_weights=None,
     ):
         # instance-local RNG for the stochastic loss sampling (no global side effect)
         self._rng = np.random.default_rng(random_state)
@@ -78,6 +79,29 @@ class FuzzyCoverLossFunction:
         )
         self._total_edge_weight = np.sum(edge_weights_numpy)
         self._adjacency_list = graph.efficient_adjacency_list()
+
+        # Optional curvature redistribution of the regularity (Dirichlet) loss:
+        # multiply each edge's smoothness penalty by a per-edge weight, the mean of
+        # its endpoints' curvature, normalized so the *total* edge weight is
+        # unchanged. This keeps the regularity budget fixed but reallocates it
+        # toward curved regions (strengthening smoothness there to resist the
+        # over-sharpening that breaks inhomogeneous manifolds like the R^3 donut),
+        # rather than adding regularity globally (which over-corrects). ``None``
+        # (default) is exactly the historical, uniform regularity.
+        self._regularity_edge_weight = None
+        if regularity_point_weights is not None:
+            point_weights = np.asarray(regularity_point_weights, dtype=float)
+            # (c_i + c_j) per edge via |coboundary| @ c (two endpoints per row)
+            endpoint_sum = np.abs(coboundary_matrix_scipy) @ point_weights
+            edge_curvature = endpoint_sum / 2.0
+            # normalize so sum_e edge_weight_e * w_e == total_edge_weight (budget
+            # preserved; only the distribution across edges changes)
+            denom = float(np.sum(edge_weights_numpy * edge_curvature))
+            if denom > 0:
+                edge_curvature = edge_curvature * (self._total_edge_weight / denom)
+            self._regularity_edge_weight = torch.tensor(
+                edge_curvature, requires_grad=False
+            ).to(torch.float32)
 
         self._initialized_losses = [
             self._measure_loss,
@@ -166,9 +190,13 @@ class FuzzyCoverLossFunction:
 
     def _regularization_loss(self, pou):
         n_pou_functions = pou.shape[0]
-        return self._dirichlet_scale * torch.sum(
-            torch.pow(pou @ self._coboundary_matrix.T, 2) * self._edge_weights
-        ) / (self._total_edge_weight * n_pou_functions)
+        edge_penalty = torch.pow(pou @ self._coboundary_matrix.T, 2) * self._edge_weights
+        if self._regularity_edge_weight is not None:
+            # curvature redistribution: reweight each edge (budget preserved)
+            edge_penalty = edge_penalty * self._regularity_edge_weight
+        return self._dirichlet_scale * torch.sum(edge_penalty) / (
+            self._total_edge_weight * n_pou_functions
+        )
 
 
 def simplex_to_psimplex_numpy(functions, p=2):
