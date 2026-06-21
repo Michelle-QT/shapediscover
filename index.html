@@ -1,0 +1,64 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ShapeDiscover benchmark results</title><style>
+:root{--ink:#1b1f24;--mut:#5b6470;--line:#e2e6ea;--accent:#2c6e8f;
+--drive:#b4452f;--confound:#7a828c;--remove:#2e7d52;--bg:#fbfcfd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+-webkit-font-smoothing:antialiased}
+main{max-width:880px;margin:0 auto;padding:42px 22px 80px}
+h1{font-size:25px;margin:0 0 4px;letter-spacing:-.2px}
+h2{font-size:17px;margin:38px 0 8px;padding-top:14px;border-top:1px solid var(--line)}
+.sub{color:var(--mut);margin:0 0 6px}
+p{margin:6px 0}
+.cap{color:var(--mut);font-size:13px;margin:2px 0 10px}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:6px 0 2px}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;
+font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left}
+thead th{border-bottom:2px solid #cfd6dc;font-weight:600;color:#2a2f36}
+tbody tr:hover{background:#f1f5f8}
+code{background:#eef2f5;padding:1px 5px;border-radius:4px;font-size:13px}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;
+font-weight:600;color:#fff}
+.t-drive{background:var(--drive)}.t-confound{background:var(--confound)}
+.t-remove{background:var(--remove)}.t-note{background:var(--accent)}
+ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
+footer{margin-top:46px;color:var(--mut);font-size:12px;border-top:1px solid var(--line);
+padding-top:12px}
+a{color:var(--accent)}
+</style></head><body><main>
+<h1>ShapeDiscover: cover-learning benchmark results</h1>
+<p class="sub">Homology recovery and the over-optimization study. Generated 2026-06-21 from committed result CSVs.</p>
+<p>ShapeDiscover learns a fuzzy cover whose <em>nerve</em> should recover the topology of a point cloud. The headline metric is the homology-recovery quotient (fraction of the nerve filtration with the exactly-correct Betti vector). <strong>Over-optimization</strong>: at fixed data and <code>n_cover</code>, with early stopping off, recovery rises to an interior-iteration peak then declines toward convergence. All tables are computed directly from the CSVs in <code>benchmarks/results/</code>.</p>
+
+<h2>1. Over-optimization severity spectrum</h2>
+<p class="cap">Master classification, 5 seeds, default loss weights <code>[1,10,1,10]</code>, each manifold at its natural <code>n_cover</code>. Recovering synthetic set only.</p>
+<table><thead><tr><th>manifold</th><th>dim</th><th>n_cover</th><th>peak</th><th>final</th><th>rel sev.</th><th>over-opt</th></tr></thead><tbody><tr><td>torus</td><td>2</td><td>52</td><td>0.490</td><td>0.100</td><td>0.76</td><td>5/5</td></tr><tr><td>rp2</td><td>2</td><td>52</td><td>0.453</td><td>0.130</td><td>0.74</td><td>5/5</td></tr><tr><td>klein_bottle</td><td>2</td><td>52</td><td>0.398</td><td>0.053</td><td>0.80</td><td>5/5</td></tr><tr><td>anisotropic_torus</td><td>2</td><td>52</td><td>0.176</td><td>0.007</td><td>0.96</td><td>4/5</td></tr><tr><td>clifford_torus</td><td>2</td><td>52</td><td>0.622</td><td>0.553</td><td>0.15</td><td>3/5</td></tr><tr><td>sphere3</td><td>3</td><td>24</td><td>0.417</td><td>0.353</td><td>0.15</td><td>3/5</td></tr><tr><td>linked_circles</td><td>1</td><td>24</td><td>0.566</td><td>0.566</td><td>0.00</td><td>1/5</td></tr><tr><td>two_circles</td><td>1</td><td>24</td><td>0.789</td><td>0.786</td><td>0.00</td><td>2/5</td></tr><tr><td>circle</td><td>1</td><td>12</td><td>0.762</td><td>0.762</td><td>0.00</td><td>1/5</td></tr><tr><td>figure_eight</td><td>1</td><td>16</td><td>0.744</td><td>0.744</td><td>0.00</td><td>0/5</td></tr><tr><td>sphere2</td><td>2</td><td>24</td><td>0.570</td><td>0.561</td><td>0.00</td><td>0/5</td></tr></tbody></table><div class="cap">peak / final = median homology-recovery quotient at the best interior iterate and at the fixed-budget convergence point (250 iters, early stop off); rel sev. = (peak−final)/peak; over-opt = seeds with an interior peak and (peak−final) &gt; 0.05.</div>
+
+<h2>2. What drives severity (single-factor sweeps)</h2>
+<table><thead><tr><th>factor (controlled)</th><th>knob range</th><th>rel sev.</th><th>verdict</th></tr></thead><tbody><tr><td>anisotropy, flat torus raw</td><td>ratio 1.0 → 0.5</td><td>0.09 → 0.96</td><td><span class="tag t-drive">driver</span></td></tr><tr><td>…same, whitened</td><td>ratio 1.0 → 0.2</td><td>0.11 → 0.10</td><td><span class="tag t-remove">whitening removes</span></td></tr><tr><td>loss balance: regularity, isotropic torus</td><td>reg 5 → 40</td><td>0.04 → 0.72</td><td><span class="tag t-drive">driver (universal)</span></td></tr><tr><td>loss balance: measure, donut</td><td>measure 0.5 → 4</td><td>0.89 → 0.02</td><td><span class="tag t-remove">measure=4 removes</span></td></tr><tr><td>under-sampling, isotropic torus</td><td>n 1500 → 6000</td><td>0.62 → 0.00</td><td><span class="tag t-drive">driver</span></td></tr><tr><td>n_cover, donut</td><td>35 / 52 / 64</td><td>over-opt 4/4, 4/4, 4/4</td><td><span class="tag t-confound">confound</span></td></tr><tr><td>sampling density, donut</td><td>angle vs area</td><td>0.75 vs 0.98</td><td><span class="tag t-note">density not the variable</span></td></tr></tbody></table><div class="cap">Each row varies one knob with the others fixed; rel sev. is the median over 4 seeds. Anisotropy / loss balance / under-sampling change severity; n_cover does not (the donut over-optimizes at every n_cover that recovers).</div>
+
+<h2>3. Cover-level mechanism</h2>
+<table><thead><tr><th>peak→final change</th><th>Spearman vs severity</th><th>reading</th></tr></thead><tbody><tr><td>element death (Δ active elements)</td><td>-0.72</td><td>more death → more severity</td></tr><tr><td>overlap sharpening (Δ participation ratio)</td><td>-0.70</td><td>more sharpening → more severity</td></tr><tr><td>over-filling (Δ strong triangles)</td><td>0.16</td><td>no relation (refuted)</td></tr></tbody></table><div class="cap">Pooled over 199 seed-rows with peak recovery &gt; 0.10. Element death and overlap sharpening track severity and are causally moved by the loss balance (the regularity term coarsens / kills elements, the measure term keeps them alive); the earlier &ldquo;over-filling&rdquo; sub-story is not supported.</div>
+
+<h2>4. Earlier benchmarking</h2>
+<p class="cap">External method comparison (topology recovery):</p>
+<table><thead><tr><th>dataset</th><th>ShapeDiscover</th><th>Alpha</th><th>Rips</th></tr></thead><tbody><tr><td>circle</td><td>0.240</td><td>0.996</td><td>0.938</td></tr><tr><td>two_circles</td><td>0.261</td><td>0.246</td><td>0.503</td></tr><tr><td>sphere2</td><td>0.524</td><td>0.930</td><td>0.654</td></tr><tr><td>torus</td><td>0.388</td><td>0.783</td><td>0.337</td></tr></tbody></table><div class="cap">Recovery quotient, mean over 3 seeds. ShapeDiscover at a fixed <code>n_cover=52</code>, default early stop (not tuned per manifold); Alpha / Rips parameter-free. Alpha recovers the donut (<code>torus</code>) cleanly, so the donut gap is method-specific, not a data problem.</div>
+<p class="cap">High intrinsic-dimensional boundary (separate failure mode, excluded from the over-optimization study):</p>
+<table><thead><tr><th>dataset</th><th>recovery</th></tr></thead><tbody><tr><td>torus3</td><td>0.000</td></tr><tr><td>s2_times_s1</td><td>0.014</td></tr><tr><td>sphere4</td><td>0.071</td></tr><tr><td>cp2</td><td>0.000</td></tr><tr><td>noise</td><td>1.000</td></tr></tbody></table><div class="cap">Recovery quotient, mean over 2 seeds, <code>n_cover=15</code>. The high intrinsic-dimensional manifolds do not recover (dense-nerve <code>C(n_cover, d+2)</code> blow-up); <code>noise</code> is the negative control (target b=[1,0,0], not hallucinated).</div>
+
+<h2>5. Future directions</h2>
+<ul>
+<li><strong>Anti-element-death / loss-balance lever</strong> (best-grounded candidate): a per-element measure floor or a higher default measure weight. Evidence: <code>measure=4</code> removes the donut's over-optimization. <em>Untested</em>: generalization to Klein bottle / RP² / raw anisotropic torus, cost on the simple manifolds, sampling-invariance. No change to the default algorithm has been made.</li>
+<li><strong>Whitening as preprocessing</strong> for linearly anisotropic data: validated on the flat torus (removes the anisotropy-induced over-optimization); does not fix the donut's nonlinear/local anisotropy.</li>
+<li><strong>High intrinsic-dimensional homology</strong>: gated by the dense-nerve blow-up; needs genuinely sparse covers before <code>n_cover</code> can be pushed higher.</li>
+<li><strong>Persistence-based clustering</strong>: the current connected-components route under-segments real high-dimensional data to a single cluster.</li>
+</ul>
+
+<footer>
+Method: ShapeDiscover, cover learning for large-scale topology representation (ICML 2025).
+Code and data: <a href="https://github.com/Michelle-QT/shapediscover">github.com/Michelle-QT/shapediscover</a>.
+Tables regenerated by <code>benchmarks/make_results_site.py</code> from <code>results/*.csv</code>.
+No numbers are hand-entered; medians/means and seed counts are as stated per table.
+</footer>
+</main></body></html>
