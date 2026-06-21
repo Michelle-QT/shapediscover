@@ -49,6 +49,8 @@ DEFAULT_DATASETS = [
     "blobs", "moons", "nested_circles", "iris", "wine", "digits",
     # small real datasets
     "diabetes", "mice_protein", "dynamical_system",
+    # image + single-cell real data (loaders skip if the data file is absent)
+    "mnist", "fashion_mnist", "cifar10", "celegans", "seurat", "rat_brain",
 ]
 
 
