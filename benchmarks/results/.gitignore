@@ -4,6 +4,9 @@
 # Ad-hoc / sweep runs use any other --tag and are ignored automatically.
 *.csv
 !baseline_*.csv
+# Over-optimization characterization study: a curated multi-seed dataset
+# (the controlled severity table + single-factor sweeps), tracked as a deliverable.
+!overopt_*.csv
 
 # Diagnostic reports / figures are regenerable scratch output.
 diagnostics/

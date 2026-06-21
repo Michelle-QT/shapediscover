@@ -17,8 +17,12 @@ not shipped in the `shapediscover` wheel.
 - `cover_diagnostics.py` look *inside* a learned cover / its nerve (surviving
   structure, filtered-Betti trajectory, per-simplex birth vs volume, volume-vs-birth
   filtration, optimization-evolution replay, `n_cover` sweep, layout-free plots).
-- `diagnose.py` CLI driving the diagnostics on a target dataset + controls.
-- `results/` output CSVs (`results/diagnostics/` holds regenerable diagnostic output).
+- `diagnose.py` CLI driving the diagnostics on a target dataset + controls, plus
+  the over-optimization characterization modes (severity classification + sweeps).
+- `overopt_analysis.py` reads the over-optimization study CSVs (`results/overopt_*.csv`)
+  and reports which factors predict severity + the cover-level mechanism.
+- `results/` output CSVs (`results/diagnostics/` holds regenerable diagnostic output;
+  `results/overopt_*.csv` is the committed over-optimization study dataset).
 
 ## Usage
 
@@ -51,6 +55,21 @@ markdown report under `results/diagnostics/`):
 
 ```
 python -m benchmarks.diagnose --evolution --n-cover-sweep
+```
+
+Characterize over-optimization (recovery rising to an interior-iteration peak then
+declining toward convergence) as a controlled multi-seed dataset, then analyze it:
+
+```
+# master severity table over the recovering manifold set (writes a tidy CSV)
+python -m benchmarks.diagnose --over-opt-classify --seeds 5 --csv results/overopt_master_v0.csv
+# single-factor sweeps (anisotropy ratio, donut tube/sampling, loss balance)
+python -m benchmarks.diagnose --severity-sweep aniso_ratio --seeds 4 --csv results/overopt_sweep_aniso_ratio_v0.csv
+# resolution / sampling knobs, and the iteration-vs-sampling-axis contrast
+python -m benchmarks.diagnose --factor-sweep torus n_cover 20 35 52 64 --seeds 4
+python -m benchmarks.diagnose --n-axis clifford_torus 1500 3000 6000 --seeds 4
+# which factors predict severity + confirm/refute the cover-level mechanism
+python -m benchmarks.overopt_analysis
 ```
 
 Results are long format (one row per metric): `dataset, method, axis, metric,

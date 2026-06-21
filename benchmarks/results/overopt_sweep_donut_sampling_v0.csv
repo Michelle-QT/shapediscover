@@ -1,0 +1,9 @@
+manifold,intrinsic_dim,betti_sum,aniso,curv,n_cover,n_points,measure_w,reg_w,seed,peak_iteration,peak_recovery,final_recovery,abs_severity,rel_severity,over_optimizes,n_active_peak,n_active_final,d_active,d_pr,d_strong_tri,d_strong_edge,strong_tri_peak,strong_tri_final,sweep,knob,knob_value
+torus,2,4,1,1,52,3000,1,10,0,60,0.578,0.149,0.42899999999999994,0.7422145328719723,1,52,40,-12,-1.1436065899253673,3,-27,50,53,donut_sampling,sampling,angle
+torus,2,4,1,1,52,3000,1,10,1,20,0.28,0.093,0.18700000000000003,0.6678571428571429,1,52,37,-15,-4.2478254590606825,7,-31,46,53,donut_sampling,sampling,angle
+torus,2,4,1,1,52,3000,1,10,2,60,0.531,0.125,0.406,0.7645951035781544,1,51,38,-13,-1.0831512575222018,10,-23,46,56,donut_sampling,sampling,angle
+torus,2,4,1,1,52,3000,1,10,3,40,0.49,0.029,0.46099999999999997,0.9408163265306122,1,52,39,-13,-1.4583769411356595,12,-28,50,62,donut_sampling,sampling,angle
+torus,2,4,1,1,52,3000,1,10,0,60,0.266,0.0,0.266,1.0,1,52,36,-16,-1.4879783570585654,-4,-41,55,51,donut_sampling,sampling,area
+torus,2,4,1,1,52,3000,1,10,1,40,0.325,0.013,0.312,0.96,1,52,36,-16,-1.6239904052915222,-4,-40,47,43,donut_sampling,sampling,area
+torus,2,4,1,1,52,3000,1,10,2,60,0.516,0.035,0.481,0.9321705426356589,1,52,38,-14,-1.248630257065435,-20,-40,67,47,donut_sampling,sampling,area
+torus,2,4,1,1,52,3000,1,10,3,40,0.334,0.0,0.334,1.0,1,52,39,-13,-1.3908535463940845,6,-31,48,54,donut_sampling,sampling,area

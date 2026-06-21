@@ -173,10 +173,104 @@ def diagnose_evolution(name, *, n_cover, knn, seed, out_dir, figures, lines):
 # Each dataset's natural cover size (validated in the diagnostics): the torus
 # needs the fine n_cover=52, the simple manifolds far fewer. Used by the
 # multi-seed evolution so the monotone-vs-non-monotone contrast is not confounded
-# by running the controls at the torus's (over-fine) cover size.
+# by running the controls at the torus's (over-fine) cover size. The 2-manifolds
+# (donut, clifford/anisotropic torus, klein, rp2) need ~52; the 1-manifolds far
+# fewer. anisotropic_torus is run RAW (preprocess off) in the severity study so
+# its anisotropy is present (the registry default whitens it away).
 NATURAL_N_COVER = {"torus": 52, "circle": 12, "sphere2": 24, "sphere3": 24,
                    "two_circles": 24, "clifford_torus": 52, "sphere4": 32,
-                   "torus3": 64, "s2_times_s1": 40}
+                   "torus3": 64, "s2_times_s1": 40, "anisotropic_torus": 52,
+                   "figure_eight": 16, "linked_circles": 24, "rp2": 52,
+                   "klein_bottle": 52}
+
+# The RECOVERING synthetic topology set (the over-optimization study backbone).
+# Excludes torus3 / s2_times_s1 / sphere4 / cp2 (never recover; nerve-blowup
+# gated, a separate failure). Each value gives the two per-manifold factor flags
+# the severity regression needs beyond (intrinsic dim, Betti sum), which are
+# derived from target_betti: aniso = the two H1 cycles at different geometric
+# scales; curv = non-constant Gaussian curvature (only the R^3 donut here). Spheres
+# have constant (non-varying) curvature, so curv=0; the Clifford / anisotropic flat
+# tori are flat. ``preprocess`` defaults True; anisotropic_torus runs raw.
+RECOVERING_FACTORS = {
+    "circle":            dict(aniso=0, curv=0),
+    "figure_eight":      dict(aniso=0, curv=0),
+    "two_circles":       dict(aniso=0, curv=0),
+    "linked_circles":    dict(aniso=0, curv=0),
+    "sphere2":           dict(aniso=0, curv=0),
+    "sphere3":           dict(aniso=0, curv=0),
+    "clifford_torus":    dict(aniso=0, curv=0),
+    "anisotropic_torus": dict(aniso=1, curv=0, preprocess=False),
+    "torus":             dict(aniso=1, curv=1),
+    "rp2":               dict(aniso=0, curv=0),
+    "klein_bottle":      dict(aniso=0, curv=0),
+}
+
+
+def _run_severity(name, *, n_cover, knn, seeds, load_kwargs=None, preprocess=True,
+                  extra=None, n_max_iter=250, n_snapshots=12):
+    """Run multi-seed optimization-evolution for one config; return per-seed
+    severity records + the manifold's target Betti / intrinsic dim.
+
+    Each seed is an independent point-cloud draw AND fit (data seed = model
+    ``random_state``), so the spread is the realistic sample-to-sample +
+    optimization variance. Early stop is off inside ``optimization_evolution``, so
+    this measures the *iteration* axis (over-training), never the early-stop /
+    n_points (over/under-sampling) axis.
+    """
+    records = []
+    target = None
+    n_points = None
+    for s in seeds:
+        ds = ds_mod.load(name, seed=s, preprocess=preprocess, **(load_kwargs or {}))
+        target = ds.target_betti
+        n_points = ds.n_points
+        ev = cd.optimization_evolution(
+            ds.X, target, n_cover=n_cover, knn=knn, random_state=s,
+            n_snapshots=n_snapshots, n_max_iter=n_max_iter, extra=extra,
+            field=ds.homology_field)
+        records.append(cd.evolution_severity(ev["rows"]))
+    return records, target, n_points
+
+
+def _severity_csv_row(name, *, dim, betti_sum, aniso, curv, n_cover, n_points,
+                      measure_w, reg_w, seed, rec, extra_cols=None):
+    """Flatten one per-seed severity record into a tidy CSV row dict."""
+    row = {
+        "manifold": name, "intrinsic_dim": dim, "betti_sum": betti_sum,
+        "aniso": aniso, "curv": curv, "n_cover": n_cover, "n_points": n_points,
+        "measure_w": measure_w, "reg_w": reg_w, "seed": seed,
+        "peak_iteration": rec["peak_iteration"],
+        "peak_recovery": rec["peak_recovery"],
+        "final_recovery": rec["final_recovery"],
+        "abs_severity": rec["abs_severity"],
+        "rel_severity": rec["rel_severity"],
+        "over_optimizes": int(rec["over_optimizes"]),
+        "n_active_peak": rec["n_active_peak"],
+        "n_active_final": rec["n_active_final"],
+        "d_active": rec["d_active"],
+        "d_pr": rec["d_pr"],
+        "d_strong_tri": rec["d_strong_tri"],
+        "d_strong_edge": rec["d_strong_edge"],
+        "strong_tri_peak": rec["strong_tri_peak"],
+        "strong_tri_final": rec["strong_tri_final"],
+    }
+    if extra_cols:
+        row.update(extra_cols)
+    return row
+
+
+def _write_csv(path, rows):
+    import csv
+
+    if not rows:
+        return
+    keys = list(rows[0].keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
 
 
 def diagnose_multiseed_evolution(name, *, knn, seeds, n_cover=None, n_snapshots=12,
@@ -542,6 +636,273 @@ def diagnose_n_cover(name, *, knn, seed, n_covers, lines):
     return sw
 
 
+def diagnose_over_opt_classify(manifolds=None, *, knn, seeds, n_max_iter=250,
+                               n_snapshots=12, loss_weights=None, csv_path=None,
+                               lines):
+    """Master multi-seed over-optimization severity table over the recovering set.
+
+    For each recovering manifold (at its natural ``n_cover``) run one independent
+    evolution per seed (early stop off, the iteration axis) and report the median
+    peak / final recovery, absolute and relative severity, the over-optimizing-seed
+    count, and the candidate cover-level mechanism as peak->final deltas (element
+    death ``d_active``, strong-triangle over-filling ``d_strong_tri``, overlap
+    sharpening ``d_pr``). Writes a tidy per-(manifold, seed) CSV for the regression.
+
+    ``loss_weights`` defaults to the shipped algorithm default ``[1,10,1,10]`` (NOT
+    the earlier ``[1,0,0,10]`` classification), so the table characterizes the
+    actual default pipeline; pass a 4-list to override.
+    """
+    manifolds = manifolds or list(RECOVERING_FACTORS)
+    extra = {"loss_weights": loss_weights} if loss_weights else None
+    measure_w = loss_weights[0] if loss_weights else 1
+    reg_w = loss_weights[3] if loss_weights else 10
+    lines.append(f"## Over-optimization severity classification "
+                 f"(recovering set, seeds={list(seeds)}, natural n_cover, "
+                 f"loss_weights={loss_weights or '[1,10,1,10] (default)'}, "
+                 f"early stop off)\n")
+    lines.append("severity = peak_recovery - final_recovery (recovery lost to "
+                 "over-training); rel = that / peak; #over-opt = seeds with an "
+                 "interior peak and abs severity > 0.05.\n")
+    lines.append("| manifold | d | betti | aniso | curv | n_cover | peak rec | "
+                 "final rec | abs sev | rel sev | #over-opt | d_active | "
+                 "d_strong_tri | d_pr |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    csv_rows = []
+    for name in manifolds:
+        f = RECOVERING_FACTORS.get(name, {})
+        aniso, curv = f.get("aniso", 0), f.get("curv", 0)
+        preprocess = f.get("preprocess", True)
+        ncov = NATURAL_N_COVER.get(name, 52)
+        records, target, n_points = _run_severity(
+            name, n_cover=ncov, knn=knn, seeds=seeds, preprocess=preprocess,
+            extra=extra, n_max_iter=n_max_iter, n_snapshots=n_snapshots)
+        dim, betti_sum = len(target) - 1, int(sum(target))
+        agg = cd.summarize_severity(records)
+        lines.append(
+            f"| {name} | {dim} | {target} | {aniso} | {curv} | {ncov} | "
+            f"{agg['peak_recovery_median']:.3f} | {agg['final_recovery_median']:.3f} | "
+            f"{agg['abs_severity_median']:.3f} | {agg['rel_severity_median']:.2f} | "
+            f"{agg['n_over_optimizing']}/{agg['n_seeds']} | "
+            f"{agg['d_active_median']:+.0f} | {agg['d_strong_tri_median']:+.0f} | "
+            f"{agg['d_pr_median']:+.2f} |")
+        for s, rec in zip(seeds, records):
+            csv_rows.append(_severity_csv_row(
+                name, dim=dim, betti_sum=betti_sum, aniso=aniso, curv=curv,
+                n_cover=ncov, n_points=n_points, measure_w=measure_w, reg_w=reg_w,
+                seed=s, rec=rec))
+    lines.append("")
+    lines.append("Mechanism columns are medians of the peak->final delta: "
+                 "d_active < 0 = element death; d_strong_tri > 0 = over-filling "
+                 "(extra strong triangles); d_pr < 0 = overlap sharpening. They are "
+                 "only interpretable where peak recovery is non-trivial.")
+    lines.append("")
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
+    return csv_rows
+
+
+# Single-factor severity sweeps: each isolates one knob while holding the rest
+# fixed (the controlled experiments the discrete table cannot give). Each spec is
+# (manifold, knob-label, list of (value, load_kwargs, preprocess, extra, n_cover)).
+def _sweep_specs():
+    donut_r2 = [(r2, {"r2": r2}, True, None, 52)
+                for r2 in (0.25, 0.40, 0.50, 0.65, 0.80)]
+    donut_sampling = [(s, {"sampling": s}, True, None, 52)
+                      for s in ("angle", "area")]
+    aniso_ratio = [(r, {"ratio": r}, False, None, 52)   # RAW (preprocess off)
+                   for r in (1.0, 0.7, 0.5, 0.35, 0.2)]
+    aniso_ratio_white = [(r, {"ratio": r}, True, None, 52)  # whitened
+                         for r in (1.0, 0.7, 0.5, 0.35, 0.2)]
+    # loss-weight sweeps (the measure vs regularity balance), geometry/topology
+    # held at 0 to isolate the two active drivers (matches the earlier weight sweep)
+    donut_reg = [(r, {}, True, {"loss_weights": [1, 0, 0, r]}, 52)
+                 for r in (5, 10, 20, 40)]
+    donut_measure = [(m, {}, True, {"loss_weights": [m, 0, 0, 10]}, 52)
+                     for m in (0.5, 1.0, 2.0, 4.0)]
+    clifford_reg = [(r, {}, True, {"loss_weights": [1, 0, 0, r]}, 52)
+                    for r in (5, 10, 20, 40)]
+    return {
+        "donut_r2": ("torus", "r2", donut_r2),
+        "donut_sampling": ("torus", "sampling", donut_sampling),
+        "aniso_ratio": ("anisotropic_torus", "ratio", aniso_ratio),
+        "aniso_ratio_white": ("anisotropic_torus", "ratio", aniso_ratio_white),
+        "donut_reg": ("torus", "reg_weight", donut_reg),
+        "donut_measure": ("torus", "measure_weight", donut_measure),
+        "clifford_reg": ("clifford_torus", "reg_weight", clifford_reg),
+    }
+
+
+def diagnose_severity_sweep(spec_name, *, knn, seeds, n_max_iter=250,
+                            n_snapshots=12, csv_path=None, lines):
+    """Single-factor severity sweep (one of :func:`_sweep_specs`).
+
+    Sweeps one knob (donut tube radius / sampling, anisotropy ratio raw or
+    whitened) and reports severity vs the knob, multi-seed. Isolates the factor the
+    discrete table confounds.
+    """
+    specs = _sweep_specs()
+    if spec_name not in specs:
+        raise ValueError(f"unknown sweep {spec_name!r}; have {sorted(specs)}")
+    name, knob, rows_spec = specs[spec_name]
+    lines.append(f"## Severity sweep: {spec_name}  "
+                 f"({name}, vary {knob}, seeds={list(seeds)}, early stop off)\n")
+    lines.append(f"| {knob} | n_cover | peak rec | final rec | abs sev | rel sev | "
+                 "#over-opt | d_active | d_strong_tri | d_pr |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    csv_rows = []
+    for value, load_kwargs, preprocess, extra, ncov in rows_spec:
+        records, target, n_points = _run_severity(
+            name, n_cover=ncov, knn=knn, seeds=seeds, load_kwargs=load_kwargs,
+            preprocess=preprocess, extra=extra, n_max_iter=n_max_iter,
+            n_snapshots=n_snapshots)
+        dim, betti_sum = len(target) - 1, int(sum(target))
+        agg = cd.summarize_severity(records)
+        lines.append(
+            f"| {value} | {ncov} | {agg['peak_recovery_median']:.3f} | "
+            f"{agg['final_recovery_median']:.3f} | {agg['abs_severity_median']:.3f} | "
+            f"{agg['rel_severity_median']:.2f} | "
+            f"{agg['n_over_optimizing']}/{agg['n_seeds']} | "
+            f"{agg['d_active_median']:+.0f} | {agg['d_strong_tri_median']:+.0f} | "
+            f"{agg['d_pr_median']:+.2f} |")
+        ff = RECOVERING_FACTORS.get(name, {})
+        # record the actual loss weights when the sweep varies them
+        mw = extra["loss_weights"][0] if extra and "loss_weights" in extra else 1
+        rw = extra["loss_weights"][3] if extra and "loss_weights" in extra else 10
+        for s, rec in zip(seeds, records):
+            csv_rows.append(_severity_csv_row(
+                name, dim=dim, betti_sum=betti_sum,
+                aniso=ff.get("aniso", 0), curv=ff.get("curv", 0),
+                n_cover=ncov, n_points=n_points, measure_w=mw, reg_w=rw,
+                seed=s, rec=rec, extra_cols={"sweep": spec_name, "knob": knob,
+                                             "knob_value": value}))
+    lines.append("")
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
+    return csv_rows
+
+
+def diagnose_factor_sweep(name, knob, values, *, knn, seeds, n_max_iter=250,
+                          n_snapshots=12, csv_path=None, lines):
+    """Severity vs an integer config knob: ``n_cover`` or ``n_points`` (``n``).
+
+    The two knobs the discrete table holds at one value. ``n_cover`` is the cover
+    resolution; ``n_points`` (passed to the dataset as ``n``) is the SAMPLING axis.
+    Both are run with early stop OFF, so they measure how the *iteration-axis*
+    over-optimization severity itself changes with resolution / sample size, which
+    is distinct from the early-stop-coupled "denser sample under-trains" effect.
+    """
+    f = RECOVERING_FACTORS.get(name, {})
+    aniso, curv = f.get("aniso", 0), f.get("curv", 0)
+    preprocess = f.get("preprocess", True)
+    base_ncov = NATURAL_N_COVER.get(name, 52)
+    lines.append(f"## Factor sweep: {name}, vary {knob}  "
+                 f"(seeds={list(seeds)}, early stop off)\n")
+    lines.append(f"| {knob} | n_cover | n_points | peak rec | final rec | abs sev | "
+                 "rel sev | #over-opt | d_active | d_pr |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    csv_rows = []
+    for v in values:
+        ncov = v if knob == "n_cover" else base_ncov
+        load_kwargs = {"n": v} if knob == "n_points" else None
+        records, target, n_points = _run_severity(
+            name, n_cover=ncov, knn=knn, seeds=seeds, load_kwargs=load_kwargs,
+            preprocess=preprocess, n_max_iter=n_max_iter, n_snapshots=n_snapshots)
+        dim, betti_sum = len(target) - 1, int(sum(target))
+        agg = cd.summarize_severity(records)
+        lines.append(
+            f"| {v} | {ncov} | {n_points} | {agg['peak_recovery_median']:.3f} | "
+            f"{agg['final_recovery_median']:.3f} | {agg['abs_severity_median']:.3f} | "
+            f"{agg['rel_severity_median']:.2f} | "
+            f"{agg['n_over_optimizing']}/{agg['n_seeds']} | "
+            f"{agg['d_active_median']:+.0f} | {agg['d_pr_median']:+.2f} |")
+        for s, rec in zip(seeds, records):
+            csv_rows.append(_severity_csv_row(
+                name, dim=dim, betti_sum=betti_sum, aniso=aniso, curv=curv,
+                n_cover=ncov, n_points=n_points, measure_w=1, reg_w=10,
+                seed=s, rec=rec, extra_cols={"sweep": f"{name}_{knob}",
+                                             "knob": knob, "knob_value": v}))
+    lines.append("")
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
+    return csv_rows
+
+
+def diagnose_n_axis(name, n_values, *, knn, seeds, n_max_iter=250, n_snapshots=12,
+                    csv_path=None, lines):
+    """Contrast the ITERATION axis with the n_points (over/under-sampling) axis.
+
+    The two are easy to conflate but may move in opposite directions. For each
+    sample size ``n`` and seed this records both:
+
+    - **iteration axis** (early stop OFF, full budget): the over-optimization curve
+      -> ``peak`` / ``final`` recovery and ``abs_severity`` (over-training as the
+      optimizer runs past the peak);
+    - **default-algorithm view** (early stop ON, the shipped ``gradient``
+      criterion): the recovery at the iterate the early stop actually lands on, and
+      *which* iterate that is (``stop_iter``). The hypothesis from the notes is that
+      a denser sample trips the gradient early stop SOONER (fewer iters ->
+      *under*-training), the opposite direction from over-optimization.
+
+    So the question is whether more points helps (the data/peak gets better) while
+    the default stop simultaneously moves, decoupling "best achievable" from "what
+    the shipped pipeline returns". Both fits share the seed / config; early-stop ON
+    is the default ``ShapeDiscover`` gradient criterion.
+    """
+    from shapediscover import ShapeDiscover
+
+    f = RECOVERING_FACTORS.get(name, {})
+    aniso, curv = f.get("aniso", 0), f.get("curv", 0)
+    preprocess = f.get("preprocess", True)
+    ncov = NATURAL_N_COVER.get(name, 52)
+    lines.append(f"## n-axis: iteration vs sampling for {name}  "
+                 f"(n_cover={ncov}, seeds={list(seeds)})\n")
+    lines.append("early-stop OFF columns = the iteration axis (over-training); "
+                 "early-stop ON columns = what the shipped default returns.\n")
+    lines.append("| n_points | peak rec (off) | final rec (off) | abs sev (off) | "
+                 "#over-opt | stop rec (on) | stop_iter (on) |")
+    lines.append("|---|---|---|---|---|---|---|")
+    csv_rows = []
+    for n in n_values:
+        off_records, target, _ = _run_severity(
+            name, n_cover=ncov, knn=knn, seeds=seeds, load_kwargs={"n": n},
+            preprocess=preprocess, n_max_iter=n_max_iter, n_snapshots=n_snapshots)
+        dim, betti_sum = len(target) - 1, int(sum(target))
+        agg = cd.summarize_severity(off_records)
+        # early-stop ON (default gradient criterion): the shipped-pipeline view
+        stop_recs, stop_iters = [], []
+        for s in seeds:
+            ds = ds_mod.load(name, seed=s, preprocess=preprocess, n=n)
+            est = ShapeDiscover(n_cover=ncov, knn=knn, random_state=s,
+                                n_max_iter=n_max_iter, early_stop=True,
+                                verbose=False, plot_loss_curve=False)
+            cover = np.asarray(est.fit_transform(ds.X)).T
+            rec = cd.filtration_recovery(cover, target, filtration="birth",
+                                         max_dimension=dim, field=ds.homology_field)
+            stop_recs.append(rec["recovery_quotient"])
+            stop_iters.append(len(est.main_optimization_losses_[-1]))
+        stop_rec_med = float(np.median(stop_recs))
+        stop_iter_med = float(np.median(stop_iters))
+        lines.append(
+            f"| {n} | {agg['peak_recovery_median']:.3f} | "
+            f"{agg['final_recovery_median']:.3f} | {agg['abs_severity_median']:.3f} | "
+            f"{agg['n_over_optimizing']}/{agg['n_seeds']} | {stop_rec_med:.3f} | "
+            f"{stop_iter_med:.0f} |")
+        for s, rec, sr, si in zip(seeds, off_records, stop_recs, stop_iters):
+            csv_rows.append(_severity_csv_row(
+                name, dim=dim, betti_sum=betti_sum, aniso=aniso, curv=curv,
+                n_cover=ncov, n_points=n, measure_w=1, reg_w=10, seed=s, rec=rec,
+                extra_cols={"sweep": f"{name}_n_axis", "knob": "n_points",
+                            "knob_value": n, "stop_recovery": sr, "stop_iter": si}))
+    lines.append("")
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
+    return csv_rows
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -569,8 +930,28 @@ def main(argv=None):
     parser.add_argument("--pr-invariance", action="store_true",
                         help="test whether convergent overlap (PR) is invariant to "
                              "n_cover at fixed balance (the dimension-sidestep check)")
+    parser.add_argument("--over-opt-classify", action="store_true",
+                        help="master multi-seed over-optimization severity table over "
+                             "the recovering manifold set (writes a tidy CSV)")
+    parser.add_argument("--severity-sweep", metavar="SPEC",
+                        help="single-factor severity sweep; SPEC in "
+                             "{donut_r2, donut_sampling, aniso_ratio, aniso_ratio_white}")
+    parser.add_argument("--factor-sweep", nargs="+", metavar="ARG",
+                        help="severity vs an integer knob: "
+                             "MANIFOLD n_cover|n_points V1 V2 ... "
+                             "(e.g. --factor-sweep torus n_points 1500 3000 6000)")
+    parser.add_argument("--n-axis", nargs="+", metavar="ARG",
+                        help="contrast the iteration axis (early stop off) with the "
+                             "n_points / early-stop axis: MANIFOLD N1 N2 ... "
+                             "(e.g. --n-axis circle 400 800 1600 3200)")
+    parser.add_argument("--loss-weights", nargs=4, type=float, default=None,
+                        metavar=("M", "G", "T", "R"),
+                        help="(--over-opt-classify) override loss_weights "
+                             "[measure geometry topology regularity]")
+    parser.add_argument("--csv", type=Path, default=None,
+                        help="path for the tidy per-seed CSV (severity modes)")
     parser.add_argument("--seeds", type=int, default=3, metavar="N",
-                        help="(--overlap-law) number of seeds 0..N-1")
+                        help="number of seeds 0..N-1 (overlap-law / severity modes)")
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = parser.parse_args(argv)
 
@@ -621,6 +1002,55 @@ def main(argv=None):
                                out_dir=out_dir, figures=figures, lines=lines)
         report = "\n".join(lines)
         (out_dir / "report_pr_invariance.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.over_opt_classify:
+        csv_path = args.csv or (out_dir / "over_opt_severity.csv")
+        diagnose_over_opt_classify(
+            knn=args.knn, seeds=tuple(range(args.seeds)),
+            loss_weights=args.loss_weights, csv_path=csv_path, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_over_opt_classify.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.severity_sweep:
+        csv_path = args.csv or (out_dir / f"severity_sweep_{args.severity_sweep}.csv")
+        diagnose_severity_sweep(args.severity_sweep, knn=args.knn,
+                                seeds=tuple(range(args.seeds)), csv_path=csv_path,
+                                lines=lines)
+        report = "\n".join(lines)
+        (out_dir / f"report_severity_sweep_{args.severity_sweep}.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.factor_sweep:
+        fname, knob, *vals = args.factor_sweep
+        if knob not in ("n_cover", "n_points"):
+            parser.error("--factor-sweep knob must be n_cover or n_points")
+        values = [int(v) for v in vals]
+        csv_path = args.csv or (out_dir / f"factor_sweep_{fname}_{knob}.csv")
+        diagnose_factor_sweep(fname, knob, values, knn=args.knn,
+                              seeds=tuple(range(args.seeds)), csv_path=csv_path,
+                              lines=lines)
+        report = "\n".join(lines)
+        (out_dir / f"report_factor_sweep_{fname}_{knob}.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.n_axis:
+        nname, *vals = args.n_axis
+        values = [int(v) for v in vals]
+        csv_path = args.csv or (out_dir / f"n_axis_{nname}.csv")
+        diagnose_n_axis(nname, values, knn=args.knn,
+                        seeds=tuple(range(args.seeds)), csv_path=csv_path, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / f"report_n_axis_{nname}.md").write_text(report)
         print(report)
         print(f"\n[diagnostics written to {out_dir}]")
         return

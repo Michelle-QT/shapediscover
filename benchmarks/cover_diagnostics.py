@@ -272,7 +272,7 @@ _FILTRATIONS = {
 def filtration_recovery(cover_internal: np.ndarray, target_betti, *,
                         filtration: str = "birth", max_dimension: int | None = None,
                         n_bins: int = 1000, prune_key: str | None = None,
-                        prune_cut: float = 0.0, tables=None) -> dict:
+                        prune_cut: float = 0.0, tables=None, field: int | None = None) -> dict:
     """Recovery quotient + Betti trajectory under a chosen nerve filtration.
 
     ``filtration`` selects which per-simplex quantity orders the nerve:
@@ -300,7 +300,9 @@ def filtration_recovery(cover_internal: np.ndarray, target_betti, *,
     values_key, transform = _FILTRATIONS[filtration]
     st = _simplex_tree_from_tables(tables, values_key, transform,
                                    prune_key=prune_key, prune_cut=prune_cut)
-    st.persistence()
+    # field-coefficient persistence (Z/2 for RP^2 / Klein bottle); None -> gudhi
+    # default (11), correct for the orientable / torsion-free manifolds.
+    st.persistence(**({"homology_coeff_field": field} if field else {}))
     intervals = [
         np.asarray(st.persistence_intervals_in_dimension(d)).reshape(-1, 2)
         for d in range(max_dimension + 1)
@@ -440,7 +442,7 @@ def betti_trajectory(intervals, target_betti, n_bins: int = 1000) -> dict:
 
 def optimization_evolution(X, target_betti, *, n_cover=52, knn=15, n_snapshots=12,
                            n_max_iter=250, random_state=0, max_dimension=None,
-                           extra=None) -> dict:
+                           extra=None, field=None) -> dict:
     """Replay one fit and track the nerve structure / Betti trajectory per snapshot.
 
     Fits ``ShapeDiscover`` with early stopping off and ``n_saved_iterations`` set,
@@ -469,7 +471,7 @@ def optimization_evolution(X, target_betti, *, n_cover=52, knn=15, n_snapshots=1
         cover = finalize_cover_internal(precover)
         struct = surviving_structure(cover, max_dimension=max_dimension)
         rec = filtration_recovery(cover, target_betti, filtration="birth",
-                                  max_dimension=max_dimension)
+                                  max_dimension=max_dimension, field=field)
         iteration = i * step if i < len(est.historical_outputs_) else n_max_iter
         window = rec["trajectory"].get("window")
         rows.append({
@@ -540,6 +542,105 @@ def aggregate_evolution(evolutions: list[dict]) -> dict:
         "per_seed": per_seed,
         "n_seeds": len(per_seed),
         "n_over_optimizing": int(n_over),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Over-optimization severity (continuous, with the candidate mechanism)
+# --------------------------------------------------------------------------- #
+
+def _strong_count(row: dict, dim: int):
+    """Number of *strong* (birth > 0.5) ``dim``-simplices recorded in a snapshot
+    row, or ``None`` if that dimension is absent (sub-2D nerves have no triangles).
+    """
+    for pd in row.get("per_dimension", []):
+        if pd["dimension"] == dim:
+            return int(pd["n_strong"])
+    return None
+
+
+def evolution_severity(rows: list[dict], *, severity_threshold: float = 0.05,
+                       peak_floor: float = 1e-6) -> dict:
+    """Over-optimization severity for one evolution trajectory (one seed).
+
+    Continuous companion to :func:`aggregate_evolution`'s per-seed classification.
+    Operational definitions (the iteration axis, early stop off; see the project
+    notes):
+
+    - ``peak_recovery``  = max ``recovery_quotient`` over the snapshot trajectory.
+    - ``final_recovery`` = ``recovery_quotient`` at the last snapshot, the
+      *convergence proxy* at ``n_max_iter`` (flagged: a fixed-budget proxy, not a
+      proof of optimizer convergence).
+    - ``abs_severity``   = ``peak_recovery - final_recovery``: recovery lost to
+      over-training (>= 0 up to snapshot noise).
+    - ``rel_severity``   = ``abs_severity / peak_recovery`` (fraction of the
+      achievable recovery thrown away); ``nan`` when ``peak_recovery <= peak_floor``
+      (a manifold that never recovers has no meaningful severity).
+    - ``over_optimizes`` = the peak is interior (before the last snapshot) AND
+      ``abs_severity > severity_threshold`` (the project's 0.05 margin).
+
+    The candidate cover-level mechanism (element death -> coarsening ->
+    over-filling) is recorded as peak->final deltas: ``d_active`` (negative =
+    element death), ``d_strong_tri`` (positive = over-filling: extra strong
+    triangles), ``d_strong_edge``, and ``d_pr`` (negative = overlap sharpening).
+    Strong-* deltas are ``None`` for sub-2D nerves.
+    """
+    rq = np.array([r["recovery_quotient"] for r in rows], dtype=float)
+    peak_idx = int(np.argmax(rq))
+    last_idx = len(rows) - 1
+    peak, final = float(rq[peak_idx]), float(rq[last_idx])
+    abs_sev = peak - final
+    rel_sev = abs_sev / peak if peak > peak_floor else float("nan")
+    pk, fn = rows[peak_idx], rows[last_idx]
+
+    def delta(dim):
+        a, b = _strong_count(pk, dim), _strong_count(fn, dim)
+        return (b - a) if (a is not None and b is not None) else None
+
+    return {
+        "peak_iteration": int(pk["iteration"]),
+        "peak_recovery": peak,
+        "final_recovery": final,
+        "abs_severity": abs_sev,
+        "rel_severity": rel_sev,
+        "over_optimizes": bool(peak_idx < last_idx - 1 and abs_sev > severity_threshold),
+        "n_active_peak": int(pk["n_active"]),
+        "n_active_final": int(fn["n_active"]),
+        "d_active": int(fn["n_active"] - pk["n_active"]),
+        "pr_peak": float(pk["overlap_pr"]),
+        "pr_final": float(fn["overlap_pr"]),
+        "d_pr": float(fn["overlap_pr"] - pk["overlap_pr"]),
+        "strong_tri_peak": _strong_count(pk, 2),
+        "strong_tri_final": _strong_count(fn, 2),
+        "d_strong_edge": delta(1),
+        "d_strong_tri": delta(2),
+    }
+
+
+def summarize_severity(records: list[dict]) -> dict:
+    """Median severity + mechanism deltas across the per-seed records of one config.
+
+    Aggregates :func:`evolution_severity` outputs (one per seed of the same
+    manifold/config). Medians are robust to the high sample-to-sample variance of
+    homology recovery; ``nan`` entries (no-recovery seeds) are dropped per key.
+    """
+    def med(key):
+        vals = [r[key] for r in records
+                if r.get(key) is not None
+                and not (isinstance(r[key], float) and np.isnan(r[key]))]
+        return float(np.median(vals)) if vals else float("nan")
+
+    return {
+        "n_seeds": len(records),
+        "n_over_optimizing": int(sum(r["over_optimizes"] for r in records)),
+        "peak_recovery_median": med("peak_recovery"),
+        "final_recovery_median": med("final_recovery"),
+        "abs_severity_median": med("abs_severity"),
+        "rel_severity_median": med("rel_severity"),
+        "d_active_median": med("d_active"),
+        "d_strong_tri_median": med("d_strong_tri"),
+        "d_pr_median": med("d_pr"),
+        "per_seed": records,
     }
 
 

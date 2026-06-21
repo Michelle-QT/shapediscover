@@ -135,3 +135,56 @@ def test_aggregate_evolution_classifies_shapes():
     # per-iteration median is computed over both seeds
     assert agg["per_iteration"][0]["recovery_median"] == pytest.approx(0.0)
     assert agg["per_iteration"][2]["recovery_median"] == pytest.approx(0.5)
+
+
+def _row(it, rq, active, pr, strong_edges=0, strong_tri=0):
+    return {"iteration": it, "recovery_quotient": rq, "n_active": active,
+            "overlap_pr": pr,
+            "per_dimension": [{"dimension": 0, "n_strong": 0},
+                              {"dimension": 1, "n_strong": strong_edges},
+                              {"dimension": 2, "n_strong": strong_tri}]}
+
+
+def test_evolution_severity_definitions():
+    # interior peak at idx 2 (recovery 0.6), then decline to 0.1 at convergence;
+    # after the peak the cover sheds elements (10->7), sharpens (PR 5->3), and
+    # gains strong triangles (8->14) -- the candidate mechanism deltas.
+    rows = [_row(0, 0.0, 10, 8.0, 20, 4), _row(10, 0.5, 10, 6.0, 22, 6),
+            _row(20, 0.6, 9, 5.0, 24, 8), _row(30, 0.3, 8, 4.0, 20, 12),
+            _row(40, 0.1, 7, 3.0, 16, 14)]
+    rec = cd.evolution_severity(rows)
+    assert rec["peak_iteration"] == 20
+    assert rec["peak_recovery"] == pytest.approx(0.6)
+    assert rec["final_recovery"] == pytest.approx(0.1)
+    assert rec["abs_severity"] == pytest.approx(0.5)
+    assert rec["rel_severity"] == pytest.approx(0.5 / 0.6)
+    assert rec["over_optimizes"] is True
+    # peak -> final mechanism deltas
+    assert rec["d_active"] == 7 - 9
+    assert rec["d_pr"] == pytest.approx(3.0 - 5.0)
+    assert rec["d_strong_tri"] == 14 - 8     # over-filling (positive)
+    assert rec["d_strong_edge"] == 16 - 24
+
+    # a monotone trajectory has zero severity and is not flagged
+    mono = [_row(0, 0.0, 10, 8.0), _row(10, 0.3, 10, 7.0), _row(20, 0.6, 10, 6.0)]
+    mrec = cd.evolution_severity(mono)
+    assert mrec["abs_severity"] == pytest.approx(0.0)
+    assert mrec["over_optimizes"] is False
+
+    # never-recovers: peak below the floor -> rel_severity is nan (undefined)
+    flat = [_row(0, 0.0, 10, 8.0), _row(10, 0.0, 10, 7.0)]
+    assert np.isnan(cd.evolution_severity(flat)["rel_severity"])
+
+
+def test_summarize_severity_drops_nan():
+    recs = [cd.evolution_severity(r) for r in (
+        # interior peak at idx 1 (0.6), declines to 0.2 -> over-optimizes
+        [_row(0, 0.0, 10, 8.0), _row(10, 0.6, 9, 5.0), _row(20, 0.4, 8, 4.0),
+         _row(30, 0.2, 7, 3.0)],
+        [_row(0, 0.0, 10, 8.0), _row(10, 0.0, 10, 7.0)],  # nan rel_severity
+    )]
+    summ = cd.summarize_severity(recs)
+    assert summ["n_seeds"] == 2
+    assert summ["n_over_optimizing"] == 1
+    # the nan rel_severity row is dropped from the median, leaving the one value
+    assert summ["rel_severity_median"] == pytest.approx(0.4 / 0.6)
