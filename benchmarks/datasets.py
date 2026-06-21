@@ -649,6 +649,124 @@ def _ds_human(seed: int = 0) -> BenchmarkDataset:
     )
 
 
+# ---- downloaded image benchmarks (pulled by download_image_datasets.py) ---- #
+
+def _load_image(name: str, n: int | None, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Load a downloaded image dataset's flattened pixels + labels (subsampled).
+
+    ``n`` is the subsample size (``None`` = the full dataset; the loaders default
+    to a suite-friendly subsample but the full data is on disk, so pass ``n=None``
+    or a larger ``n`` to use more). Missing files raise a clear error.
+    """
+    xp = DATA_DIR / f"{name}_X.npy"
+    yp = DATA_DIR / f"{name}_y.npy"
+    if not xp.exists():
+        raise FileNotFoundError(
+            f"{name}_X.npy not found at {xp}; run "
+            "`python -m benchmarks.download_image_datasets` (needs network)."
+        )
+    X = np.load(xp).astype(float)
+    y = np.load(yp).astype(int)
+    if n is not None and n < len(X):
+        idx = np.random.default_rng(seed).choice(len(X), size=n, replace=False)
+        X, y = X[idx], y[idx]
+    return X, y
+
+
+@register("mnist")
+def _ds_mnist(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """MNIST handwritten digits (28x28 = 784-dim pixels), 10 classes.
+
+    Subsampled to ``n`` for the suite; the full 60k is on disk (pass ``n=None``).
+    Pixels are common-scale [0,1], so left raw.
+    """
+    X, y = _load_image("mnist", n, seed)
+    return BenchmarkDataset(
+        "mnist", X, labels=y, axes=(CLUSTERING, EMBEDDING),
+        metadata={"n": int(X.shape[0]), "n_classes": 10, "subsample": n},
+    )
+
+
+@register("fashion_mnist")
+def _ds_fashion_mnist(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """Fashion-MNIST (28x28 = 784-dim), 10 clothing classes. Subsampled to ``n``."""
+    X, y = _load_image("fashion_mnist", n, seed)
+    return BenchmarkDataset(
+        "fashion_mnist", X, labels=y, axes=(CLUSTERING, EMBEDDING),
+        metadata={"n": int(X.shape[0]), "n_classes": 10, "subsample": n},
+    )
+
+
+@register("cifar10")
+def _ds_cifar10(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """CIFAR-10 (32x32x3 = 3072-dim raw pixels), 10 classes. Subsampled to ``n``.
+
+    Raw pixels are a hard, high-dimensional clustering/embedding stress (no
+    learned features); standardized per the policy is not applied (common-scale).
+    """
+    X, y = _load_image("cifar10", n, seed)
+    return BenchmarkDataset(
+        "cifar10", X, labels=y, axes=(CLUSTERING, EMBEDDING),
+        metadata={"n": int(X.shape[0]), "n_classes": 10, "subsample": n},
+    )
+
+
+# ---- single-cell datasets ------------------------------------------------- #
+
+@register("celegans")
+def _ds_celegans(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """C. elegans embryo single-cell (Packer et al. 2019), 50 PCs, cell-type labels.
+
+    The collaborator's recipe: take the 50 principal components and normalize each
+    cell to unit 2-norm (the ``unit_norm`` policy). Labels are the annotated cell
+    types (cells with no annotation are dropped). Subsampled to ``n``.
+    """
+    import pandas as pd
+    base = DATA_DIR / "celegans_embryo_data"
+    xp = base / "CESub_Xa.csv"
+    if not xp.exists():
+        raise FileNotFoundError(f"celegans data not found at {base}")
+    df = pd.read_csv(xp, index_col=0)
+    pcs = [f"PC{i+1}" for i in range(50)]
+    X = df[pcs].to_numpy(dtype=float)
+    ct = pd.read_csv(base / "celltype.csv", index_col=0).iloc[:, 0]
+    keep = ct.notna().to_numpy()  # drop unannotated cells (NA cell type)
+    labels_raw = ct[keep].astype(str).to_numpy()
+    X = X[keep]
+    _, y = np.unique(labels_raw, return_inverse=True)
+    if n is not None and n < len(X):
+        idx = np.random.default_rng(seed).choice(len(X), size=n, replace=False)
+        X, y = X[idx], y[idx]
+    return BenchmarkDataset(
+        "celegans", X, labels=y.astype(int), axes=(CLUSTERING, EMBEDDING),
+        preprocessing="unit_norm",
+        metadata={"n": int(X.shape[0]), "n_classes": int(len(set(y))), "source": str(xp)},
+    )
+
+
+@register("seurat")
+def _ds_seurat(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """Seurat-normalized single-cell expression (no ground-truth labels).
+
+    A wide single-cell matrix (cells x normalized features); used on the embedding
+    axis (and clustering by intrinsic structure). Subsampled to ``n``; unit-2-norm
+    per the single-cell policy.
+    """
+    import pandas as pd
+    path = DATA_DIR / "seurat_normalized.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"seurat_normalized.csv not found at {path}")
+    df = pd.read_csv(path, index_col=0)
+    X = df.to_numpy(dtype=float)
+    if n is not None and n < len(X):
+        idx = np.random.default_rng(seed).choice(len(X), size=n, replace=False)
+        X = X[idx]
+    return BenchmarkDataset(
+        "seurat", X, axes=(EMBEDDING,), preprocessing="unit_norm",
+        metadata={"n": int(X.shape[0]), "n_features": int(X.shape[1]), "source": str(path)},
+    )
+
+
 def _preprocess(X: np.ndarray, kind: str) -> np.ndarray:
     """Apply the declared feature preprocessing (the harness-wide policy).
 
