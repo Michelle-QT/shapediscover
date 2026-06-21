@@ -21,6 +21,8 @@ not shipped in the `shapediscover` wheel.
   the over-optimization characterization modes (severity classification + sweeps).
 - `overopt_analysis.py` reads the over-optimization study CSVs (`results/overopt_*.csv`)
   and reports which factors predict severity + the cover-level mechanism.
+- `make_results_site.py` builds a self-contained `index.html` (tables computed
+  directly from `results/*.csv`) for a static results page.
 - `results/` output CSVs (`results/diagnostics/` holds regenerable diagnostic output;
   `results/overopt_*.csv` is the committed over-optimization study dataset).
 
