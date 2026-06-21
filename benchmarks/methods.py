@@ -46,7 +46,7 @@ class Method:
     def embedding(self) -> np.ndarray:
         raise NotImplementedError(f"{self.name} does not provide an embedding")
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         raise NotImplementedError(f"{self.name} does not provide persistence")
 
     def params(self) -> dict:
@@ -210,12 +210,12 @@ class ShapeDiscoverMethod(CoverMethod):
 
     # -- topology ----------------------------------------------------------- #
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         # Delegate to the maintained ShapeDiscover.fit_persistence: it builds the
         # nerve from the public cover_, transposing to the internal orientation
         # itself (the same self.cover_.T boundary as PR5), with the log
         # normalization used in the paper's homology-recovery experiments.
-        self.discover_.fit_persistence(max_dim, verbose=False)
+        self.discover_.fit_persistence(max_dim, verbose=False, homology_coeff_field=field)
         intervals = [
             np.asarray(pd).reshape(-1, 2) for pd in self.discover_.persistence_diagram_
         ]
@@ -326,7 +326,7 @@ class FuzzyCoverMethod(CoverMethod):
 
     # -- topology ----------------------------------------------------------- #
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         # Same nerve construction and log normalization as ShapeDiscover's
         # fit_persistence (the shared _cover_to_simplex_tree helper), so the
         # topology axis is compared on identical footing.
@@ -335,7 +335,7 @@ class FuzzyCoverMethod(CoverMethod):
         simplex_tree = _cover_to_simplex_tree(
             self.cover_.T, max_dim, clique_complex=False, log_normalization=True
         )
-        simplex_tree.persistence()
+        simplex_tree.persistence(**({"homology_coeff_field": field} if field else {}))
         intervals = [
             np.asarray(simplex_tree.persistence_intervals_in_dimension(d)).reshape(-1, 2)
             for d in range(max_dim + 1)

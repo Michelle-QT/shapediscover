@@ -39,6 +39,8 @@ DEFAULT_DATASETS = [
     "clifford_torus", "torus3", "s2_times_s1", "sphere4", "clifford_torus_amb50",
     # more manifolds: anisotropy control, CP^2, figure-eight, linked circles
     "anisotropic_torus", "cp2", "figure_eight", "linked_circles",
+    # non-orientable (read over Z/2): RP^2, Klein bottle
+    "rp2", "klein_bottle",
     # topological negative control (no topology; must report [1,0,0])
     "noise",
     # synthetic manifolds (embedding / DR)

@@ -67,11 +67,11 @@ class AlphaComplexMethod(Method):
         self.X_ = _farthest_point_subsample(X, self.n_landmarks)
         return self
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         import gudhi
 
         st = gudhi.AlphaComplex(points=self.X_).create_simplex_tree()
-        st.persistence()
+        st.persistence(**({"homology_coeff_field": field} if field else {}))
         return _intervals(st, max_dim), int(st.num_simplices())
 
     def params(self) -> dict:
@@ -103,11 +103,11 @@ class RipsComplexMethod(Method):
         self.X_ = _farthest_point_subsample(X, self.n_landmarks)
         return self
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         from ripser import ripser
         from scipy.special import comb
 
-        dgms = ripser(self.X_, maxdim=max_dim)["dgms"]
+        dgms = ripser(self.X_, maxdim=max_dim, coeff=(field if field else 2))["dgms"]
         intervals = [np.asarray(d).reshape(-1, 2) for d in dgms]
         n = len(self.X_)
         complex_size = int(sum(comb(n, i, exact=True) for i in range(1, max_dim + 3)))
@@ -146,7 +146,7 @@ class WitnessComplexMethod(Method):
         self.landmarks_ = _farthest_point_subsample(X, self.n_landmarks)
         return self
 
-    def persistence(self, max_dim: int) -> tuple[list[np.ndarray], int]:
+    def persistence(self, max_dim: int, field: int | None = None) -> tuple[list[np.ndarray], int]:
         import gudhi
         from scipy.spatial.distance import cdist
 
@@ -162,7 +162,7 @@ class WitnessComplexMethod(Method):
         st = wc.create_simplex_tree(
             max_alpha_square=max_alpha_square, limit_dimension=max_dim + 1
         )
-        st.persistence()
+        st.persistence(**({"homology_coeff_field": field} if field else {}))
         return _intervals(st, max_dim), int(st.num_simplices())
 
     def params(self) -> dict:

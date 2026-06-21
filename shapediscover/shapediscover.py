@@ -632,6 +632,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         max_dimension: int = 1,
         clique_complex: bool = False,
         verbose: bool = True,
+        homology_coeff_field: int | None = None,
     ) -> None:
         """Compute the persistent homology of the learned cover's nerve.
 
@@ -645,6 +646,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             Highest homological dimension to compute.
         clique_complex : bool
             If True, build the nerve as a clique (flag) complex.
+        homology_coeff_field : int or None
+            Prime field for the homology coefficients. ``None`` uses gudhi's
+            default (11), correct for orientable / torsion-free spaces; pass 2 to
+            read Z/2 homology (non-orientable spaces: RP^2, Klein bottle).
         """
         if max_dimension < 0:
             raise ValueError(f"max_dimension must be non-negative; got {max_dimension}.")
@@ -664,7 +669,10 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
             print("time create simplicial complex", time_end - time_start)
 
         time_start = time.time()
-        self.gudhi_persistence_diagram_ = simplex_tree.persistence()
+        self.gudhi_persistence_diagram_ = simplex_tree.persistence(
+            **({"homology_coeff_field": homology_coeff_field}
+               if homology_coeff_field else {})
+        )
         self.persistence_diagram_ = [
             np.array(simplex_tree.persistence_intervals_in_dimension(i))
             for i in range(max_dimension + 1)

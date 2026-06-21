@@ -29,7 +29,15 @@ EXPECTED = {
     "cp2": ([1, 0, 1, 0, 1], 9),
     "figure_eight": ([1, 2], 2),
     "linked_circles": ([2, 2], 3),
+    "rp2": ([1, 1, 1], 4),
+    "klein_bottle": ([1, 2, 1], 4),
 }
+
+
+def test_nonorientable_use_z2_field():
+    # RP^2 / Klein bottle declare Z/2 so their target_betti is read correctly.
+    for name in ("rp2", "klein_bottle"):
+        assert datasets.load(name, seed=0).homology_field == 2
 
 
 @pytest.mark.parametrize("name", list(EXPECTED))

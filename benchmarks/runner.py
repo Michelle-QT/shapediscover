@@ -64,7 +64,7 @@ def evaluate_fit(
             if profile_memory:
                 tracemalloc.reset_peak()
             t = time.perf_counter()
-            intervals, size = method.persistence(max_dim)
+            intervals, size = method.persistence(max_dim, field=ds.homology_field)
             cost["persistence_s"] = round(time.perf_counter() - t, 4)
             if profile_memory:
                 cost["persistence_peak_mb"] = _peak_mb()

@@ -77,6 +77,10 @@ class BenchmarkDataset:
     target_betti: list[int] | None = None
     axes: tuple[str, ...] = ()
     preprocessing: str = "none"
+    # prime field for persistent homology; None = the gudhi default (11), correct
+    # for orientable / torsion-free spaces. Non-orientable / torsion datasets
+    # (RP^2, Klein bottle, lens spaces) set 2 so target_betti is read over Z/2.
+    homology_field: int | None = None
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -418,6 +422,55 @@ def _ds_cp2(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDatase
     return BenchmarkDataset(
         "cp2", X, target_betti=[1, 0, 1, 0, 1], axes=(TOPOLOGY,),
         metadata={"n": n, "noise": noise, "intrinsic_dim": 4},
+    )
+
+
+@register("rp2")
+def _ds_rp2(seed: int = 0, n: int = 2000, noise: float = 0.0) -> BenchmarkDataset:
+    """Real projective plane RP^2 in R^4, Betti over Z/2 = [1,1,1].
+
+    The classic embedding F(x,y,z) = (xy, yz, zx, x^2 - y^2) restricted to S^2
+    (F(p) = F(-p), so it descends to RP^2). Non-orientable: over Q the homology
+    is trivial-looking ([1,0,0]), so this is read over Z/2 (homology_field=2),
+    where it shows its characteristic [1,1,1] -- a field-coefficient test.
+    """
+    rng = np.random.default_rng(seed)
+    s = _sphere(n, 2, rng)
+    x, y, z = s[:, 0], s[:, 1], s[:, 2]
+    X = np.column_stack([x * y, y * z, z * x, x**2 - y**2])
+    if noise:
+        X = X + rng.normal(scale=np.sqrt(noise), size=X.shape)
+    return BenchmarkDataset(
+        "rp2", X, target_betti=[1, 1, 1], axes=(TOPOLOGY,), homology_field=2,
+        metadata={"n": n, "noise": noise, "intrinsic_dim": 2, "field": "Z/2"},
+    )
+
+
+@register("klein_bottle")
+def _ds_klein_bottle(seed: int = 0, n: int = 3000, noise: float = 0.0,
+                     r: float = 3.0) -> BenchmarkDataset:
+    """Klein bottle in R^4, Betti over Z/2 = [1,2,1].
+
+    The standard figure-8-immersion-style embedding in R^4. Non-orientable: over Q
+    it reads [1,1,0], so it is computed over Z/2 (homology_field=2) where it shows
+    [1,2,1] (like a torus but non-orientable) -- the most distinctive Z/2 test.
+    """
+    rng = np.random.default_rng(seed)
+    theta = rng.random(n) * 2 * np.pi
+    phi = rng.random(n) * 2 * np.pi
+    half = theta / 2.0
+    rho = r + np.cos(half) * np.sin(phi) - np.sin(half) * np.sin(2 * phi)
+    X = np.column_stack([
+        rho * np.cos(theta),
+        rho * np.sin(theta),
+        np.sin(half) * np.sin(phi) + np.cos(half) * np.sin(2 * phi),
+        np.cos(phi),
+    ])
+    if noise:
+        X = X + rng.normal(scale=np.sqrt(noise), size=X.shape)
+    return BenchmarkDataset(
+        "klein_bottle", X, target_betti=[1, 2, 1], axes=(TOPOLOGY,), homology_field=2,
+        metadata={"n": n, "noise": noise, "intrinsic_dim": 2, "field": "Z/2"},
     )
 
 
@@ -764,6 +817,30 @@ def _ds_seurat(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
     return BenchmarkDataset(
         "seurat", X, axes=(EMBEDDING,), preprocessing="unit_norm",
         metadata={"n": int(X.shape[0]), "n_features": int(X.shape[1]), "source": str(path)},
+    )
+
+
+@register("rat_brain")
+def _ds_rat_brain(seed: int = 0, n: int = 3000) -> BenchmarkDataset:
+    """Rat grid-cell population activity (Gardner et al. 2022), 6D embedding.
+
+    Wired on the EMBEDDING axis only: a Rips check of both supplied embeddings
+    (toremb_X 2D, toremb_Y 6D) did NOT cleanly show the expected grid-cell torus
+    [1,2,1] at a farthest-point subsample (the published toroidal topology needs
+    the paper's dedicated preprocessing), so no target_betti is asserted here. See
+    the project-notes item on verifying the grid-cell torus before claiming it.
+    """
+    path = DATA_DIR / "rat_brain" / "toremb_Y.npy"
+    if not path.exists():
+        raise FileNotFoundError(f"rat_brain data not found at {path}")
+    X = np.load(path).astype(float)
+    if n is not None and n < len(X):
+        idx = np.random.default_rng(seed).choice(len(X), size=n, replace=False)
+        X = X[idx]
+    return BenchmarkDataset(
+        "rat_brain", X, axes=(EMBEDDING,),
+        metadata={"n": int(X.shape[0]), "source": str(path),
+                  "note": "torus topology not verified; embedding axis only"},
     )
 
 
