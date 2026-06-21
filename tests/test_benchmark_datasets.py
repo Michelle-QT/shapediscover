@@ -26,6 +26,9 @@ EXPECTED = {
     "s2_times_s1": ([1, 1, 1, 1], 5),
     "sphere4": ([1, 0, 0, 0, 1], 5),
     "clifford_torus_amb50": ([1, 2, 1], 50),
+    "cp2": ([1, 0, 1, 0, 1], 9),
+    "figure_eight": ([1, 2], 2),
+    "linked_circles": ([2, 2], 3),
 }
 
 

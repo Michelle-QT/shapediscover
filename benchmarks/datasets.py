@@ -391,6 +391,79 @@ def _ds_clifford_torus_amb50(seed: int = 0, n: int = 3000, noise: float = 0.0,
     )
 
 
+# Manifolds reimplemented (clean-room) from the collaborator's manifold library
+# (code-snippets/manifold_benchmarks.py, untested -> used as the mathematical
+# spec only). Betti numbers verified by Rips on a farthest-point subsample.
+
+@register("cp2")
+def _ds_cp2(seed: int = 0, n: int = 3000, noise: float = 0.0) -> BenchmarkDataset:
+    """Complex projective plane CP^2 in R^9, Betti [1,0,1,0,1] (field-independent).
+
+    Sample S^5 in C^3 and apply the rank-1 Hermitian projector map (U(1)-invariant,
+    so it descends to CP^2): the 9 real coordinates of z z^* upper triangle. An
+    orientable 4-manifold with H2 and H4 -- a high-dimensional-homology test.
+    """
+    rng = np.random.default_rng(seed)
+    s5 = _sphere(n, 5, rng)                      # (n, 6) unit vectors in R^6 = C^3
+    z = s5[:, :3] + 1j * s5[:, 3:]
+    z0, z1, z2 = z[:, 0], z[:, 1], z[:, 2]
+    X = np.column_stack([
+        np.abs(z0) ** 2, np.abs(z1) ** 2, np.abs(z2) ** 2,
+        (np.conj(z0) * z1).real, (np.conj(z0) * z1).imag,
+        (np.conj(z0) * z2).real, (np.conj(z0) * z2).imag,
+        (np.conj(z1) * z2).real, (np.conj(z1) * z2).imag,
+    ])
+    if noise:
+        X = X + rng.normal(scale=np.sqrt(noise), size=X.shape)
+    return BenchmarkDataset(
+        "cp2", X, target_betti=[1, 0, 1, 0, 1], axes=(TOPOLOGY,),
+        metadata={"n": n, "noise": noise, "intrinsic_dim": 4},
+    )
+
+
+@register("figure_eight")
+def _ds_figure_eight(seed: int = 0, n: int = 800, noise: float = 0.01) -> BenchmarkDataset:
+    """Figure-eight (lemniscate of Gerono) in R^2, Betti [1,2].
+
+    A single closed curve crossing itself once: a wedge of two circles
+    (b1 = 2). The self-crossing is a *bottleneck* (the two branches pass close),
+    so it is a clean threshold / inhomogeneous-geometry stress in 1D.
+    """
+    rng = np.random.default_rng(seed)
+    t = rng.random(n) * 2 * np.pi
+    X = np.column_stack([np.cos(t), np.sin(t) * np.cos(t)])
+    if noise:
+        X = X + rng.normal(scale=noise, size=X.shape)
+    return BenchmarkDataset(
+        "figure_eight", X, target_betti=[1, 2], axes=(TOPOLOGY,),
+        metadata={"n": n, "noise": noise, "intrinsic_dim": 1},
+    )
+
+
+@register("linked_circles")
+def _ds_linked_circles(seed: int = 0, n: int = 800, noise: float = 0.0) -> BenchmarkDataset:
+    """Two linked circles (Hopf link) in R^3, Betti [2,2].
+
+    Homologically identical to ``two_circles`` (two components, two loops);
+    ordinary homology does not see the *linking*, so this stresses the embedding /
+    geometry rather than the topology axis (a useful negative-distinction set).
+    """
+    rng = np.random.default_rng(seed)
+    half = n // 2
+    t = rng.random(half) * 2 * np.pi
+    s = rng.random(n - half) * 2 * np.pi
+    a = np.column_stack([np.cos(t), np.sin(t), np.zeros(half)])
+    b = np.column_stack([1 + np.cos(s), np.zeros(n - half), np.sin(s)])
+    X = np.vstack([a, b])
+    labels = np.concatenate([np.zeros(half, int), np.ones(n - half, int)])
+    if noise:
+        X = X + rng.normal(scale=np.sqrt(noise), size=X.shape)
+    return BenchmarkDataset(
+        "linked_circles", X, labels=labels, target_betti=[2, 2],
+        axes=(TOPOLOGY, CLUSTERING), metadata={"n": n, "noise": noise},
+    )
+
+
 @register("noise")
 def _ds_noise(seed: int = 0, n: int = 1000, dim: int = 10) -> BenchmarkDataset:
     """Isotropic Gaussian point cloud in R^dim: a topological NEGATIVE CONTROL.
