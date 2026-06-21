@@ -431,6 +431,102 @@ def _plot_overlap_law(plot_rows, out_dir):
     plt.close(fig)
 
 
+# Homogeneous manifolds at a few n_cover each, capped to keep the dense nerve
+# tractable. The question: is the convergent overlap flat in n_cover?
+PR_INVARIANCE_MANIFOLDS = [
+    ("circle", [8, 12, 20, 32], 1),
+    ("sphere2", [12, 24, 40, 60], 2),
+    ("clifford_torus", [24, 40, 52, 64], 2),
+    ("sphere3", [24, 40, 52], 3),
+]
+
+
+def diagnose_pr_invariance(manifolds=None, *, knn, seeds, n_max_iter=200,
+                           out_dir, figures, lines):
+    """Is the convergent overlap (PR) set by the loss balance + geometry, hence
+    ~invariant to n_cover and emergently dimension-adaptive?
+
+    For each homogeneous manifold, at the *fixed default* loss balance
+    (``[1,10,1,10]``) and early stop off, fit at several ``n_cover`` and record
+    the convergent overlap (participation ratio) and recovery. If PR is ~flat in
+    ``n_cover`` (and sits near ``d+1``), the optimization self-tunes overlap to
+    the intrinsic dimension without anyone estimating it -> dimension estimation
+    is sidestepped and ``n_cover`` is only a resolution knob. If PR drifts with
+    ``n_cover``, the overlap is not an emergent geometric quantity and the
+    sidestep fails.
+    """
+    from shapediscover import ShapeDiscover
+
+    manifolds = manifolds or PR_INVARIANCE_MANIFOLDS
+    lines.append(f"## PR invariance: convergent overlap vs n_cover at fixed balance "
+                 f"[1,10,1,10] (knn={knn}, seeds={list(seeds)}, early stop off)\n")
+    lines.append("| manifold | d | n_cover | conv PR | recovery | n_active |")
+    lines.append("|---|---|---|---|---|---|")
+
+    plot_data = {}
+    for name, ncovers, dim in manifolds:
+        target = ds_mod.load(name, seed=seeds[0]).target_betti
+        max_dim = len(target) - 1
+        pr_by_nc = []
+        for nc in ncovers:
+            prs, recs, actives = [], [], []
+            for s in seeds:
+                X = ds_mod.load(name, seed=s).X
+                est = ShapeDiscover(
+                    n_cover=nc, knn=knn, random_state=s, n_max_iter=n_max_iter,
+                    early_stop=False, verbose=False, plot_loss_curve=False)
+                cover = np.asarray(est.fit_transform(X)).T
+                prs.append(cd.mean_participation_ratio(cover))
+                rec = cd.filtration_recovery(cover, target, filtration="birth",
+                                             max_dimension=max_dim)
+                recs.append(rec["recovery_quotient"])
+                actives.append(int(np.unique(np.argmax(cover, axis=0)).size))
+            pr_m, pr_s = float(np.mean(prs)), float(np.std(prs))
+            lines.append(f"| {name} | {dim} | {nc} | {pr_m:.2f}±{pr_s:.2f} | "
+                         f"{np.mean(recs):.3f} | {np.mean(actives):.0f} |")
+            pr_by_nc.append((nc, pr_m, pr_s))
+        # spread of convergent PR across the n_cover range (the invariance test)
+        prs_only = [p for _, p, _ in pr_by_nc]
+        spread = max(prs_only) - min(prs_only)
+        rel = spread / np.mean(prs_only) if np.mean(prs_only) else float("nan")
+        lines.append(f"|   | | **PR range** | **{spread:.2f} "
+                     f"({100*rel:.0f}% of mean)** | | |")
+        plot_data[name] = {"dim": dim, "points": pr_by_nc}
+    lines.append("")
+    lines.append("If conv PR is ~flat in n_cover (small PR range) and sits near "
+                 "d+1, overlap is emergent/dimension-adaptive (dimension estimation "
+                 "is sidestepped). If it drifts with n_cover, it is not.")
+    lines.append("")
+
+    if figures and plot_data:
+        _plot_pr_invariance(plot_data, out_dir)
+    return plot_data
+
+
+def _plot_pr_invariance(plot_data, out_dir):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for i, (name, d) in enumerate(plot_data.items()):
+        ncs = [p[0] for p in d["points"]]
+        prs = [p[1] for p in d["points"]]
+        errs = [p[2] for p in d["points"]]
+        dim = d["dim"]
+        ax.errorbar(ncs, prs, yerr=errs, marker="o", capsize=3,
+                    label=f"{name} (d={dim})", color=f"C{i}")
+        ax.axhline(dim + 1, ls="--", color=f"C{i}", alpha=0.35)
+    ax.set_xlabel("n_cover")
+    ax.set_ylabel("convergent overlap PR")
+    ax.set_title("PR invariance: convergent overlap vs n_cover\n"
+                 "(dashed = d+1; flat lines => overlap is emergent, dimension auto-handled)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_dir / "pr_invariance.png", dpi=120)
+    plt.close(fig)
+
+
 def diagnose_n_cover(name, *, knn, seed, n_covers, lines):
     ds = ds_mod.load(name, seed=seed)
     target = ds.target_betti
@@ -470,6 +566,9 @@ def main(argv=None):
                         help="Frontier A: measure optimal overlap (PR) vs intrinsic "
                              "dimension / topological complexity across the "
                              "homogeneous manifolds (n_cover sweep, multi-seed)")
+    parser.add_argument("--pr-invariance", action="store_true",
+                        help="test whether convergent overlap (PR) is invariant to "
+                             "n_cover at fixed balance (the dimension-sidestep check)")
     parser.add_argument("--seeds", type=int, default=3, metavar="N",
                         help="(--overlap-law) number of seeds 0..N-1")
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
@@ -513,6 +612,15 @@ def main(argv=None):
                              out_dir=out_dir, figures=figures, lines=lines)
         report = "\n".join(lines)
         (out_dir / "report_overlap_law.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.pr_invariance:
+        diagnose_pr_invariance(knn=args.knn, seeds=tuple(range(args.seeds)),
+                               out_dir=out_dir, figures=figures, lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_pr_invariance.md").write_text(report)
         print(report)
         print(f"\n[diagnostics written to {out_dir}]")
         return
