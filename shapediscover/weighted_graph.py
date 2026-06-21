@@ -213,6 +213,44 @@ class WeightedGraph:
             return gen.uniform(low=-10.0, high=10.0, size=(graph.shape[0], dim))
 
 
+def curvature_measure_weights(pointcloud, adjacency_matrix, strength=1.0,
+                              bandwidth=None, invert=False):
+    """Per-point measure weight from a discrete curvature proxy (mean 1).
+
+    The offset of each point from the mean of its graph neighbors,
+    ``c_i = || X_i - mean_{j~i} X_j ||``, estimates the local (extrinsic) mean
+    curvature: ~0 on a locally flat, evenly-sampled patch and larger where the
+    manifold bends. The weight blends uniform with the normalized curvature,
+    ``w_i = (1 - strength) + strength * c_i / mean(c)``, so ``mean(w) = 1`` (the
+    overall measure scale is preserved) and ``w_i >= 1 - strength > 0``.
+
+    Used to make the measure loss penalize cover-element mass *more* in curved
+    regions, so elements there shrink (more resolution) instead of being forced
+    to the single uniform size the plain measure loss wants. Because ``c_i`` is
+    ~constant on a homogeneous manifold, ``w_i ~ 1`` there regardless of
+    ``strength`` (an automatic no-op); the weighting only acts where curvature
+    actually varies (e.g. the R^3 donut vs the flat torus). ``strength=0``
+    reproduces the uniform weighting exactly.
+    """
+    A = sp.sparse.csr_matrix(adjacency_matrix)
+    degree = np.asarray(A.sum(axis=1)).ravel()
+    degree[degree == 0] = 1.0
+    neighbor_mean = (A @ pointcloud) / degree[:, None]
+    curvature = np.linalg.norm(pointcloud - neighbor_mean, axis=1)
+    if bandwidth and bandwidth > 0:
+        curvature = curvature / bandwidth
+    mean_c = curvature.mean()
+    if mean_c <= 0:
+        return np.ones(pointcloud.shape[0])
+    normalized = curvature / mean_c
+    blended = (1.0 - strength) + strength * normalized
+    if invert:
+        # weaken the measure (preserve overlap) where curved, instead of
+        # strengthening it; bounded since blended >= 1 - strength > 0.
+        blended = 1.0 / blended
+    return blended / blended.mean()
+
+
 def graph_from_pointcloud(
     pointcloud, n_neighbors, algorithm="knn", metric="euclidean", random_state=None,
     delta=1.0, cknn_weighted=False,

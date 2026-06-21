@@ -20,9 +20,20 @@ class FuzzyCoverLossFunction:
         log=False,
         random_state=None,
         density_normalize_power=0.0,
+        measure_point_weights=None,
     ):
         # instance-local RNG for the stochastic loss sampling (no global side effect)
         self._rng = np.random.default_rng(random_state)
+
+        # Optional per-point weighting of the measure loss (curvature-adaptive
+        # cover): mass_a = sum_x w(x) phi_a(x) instead of sum_x phi_a(x). With w
+        # large in curved regions, elements there are penalized more and shrink.
+        # ``None`` (default) is uniform weighting, exactly the historical measure.
+        self._measure_point_weights = None
+        if measure_point_weights is not None:
+            self._measure_point_weights = torch.tensor(
+                np.asarray(measure_point_weights), requires_grad=False
+            ).to(torch.float32)
 
         # Density normalization of the Dirichlet-energy losses (geometry,
         # regularity): divide by the graph bandwidth raised to
@@ -112,7 +123,13 @@ class FuzzyCoverLossFunction:
     def _measure_loss(self, pou):
         n_pou_functions = pou.shape[0]
         n_points = pou.shape[1]
-        return torch.sum(torch.pow(torch.sum(pou, axis=1), 2)) / (
+        if self._measure_point_weights is None:
+            element_mass = torch.sum(pou, axis=1)
+        else:
+            # curvature-weighted mass: mass_a = sum_x w(x) phi_a(x). w has mean 1,
+            # so the n_points**2 normalization keeps the loss on the same scale.
+            element_mass = pou @ self._measure_point_weights
+        return torch.sum(torch.pow(element_mass, 2)) / (
             n_pou_functions * n_points**2
         )
 

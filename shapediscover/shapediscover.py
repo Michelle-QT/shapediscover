@@ -17,7 +17,7 @@ from .fuzzy_cover import (
     fuzzy_cover_from_fuzzycmeans,
     fuzzy_cover_to_filtered_complex,
 )
-from .weighted_graph import graph_from_pointcloud
+from .weighted_graph import graph_from_pointcloud, curvature_measure_weights
 from .shapediscover_plot import plot_losses
 
 
@@ -160,6 +160,14 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         # raised to this power, to make them less sample-size dependent (0 = off;
         # the fixed-function Dirichlet value is 2 but overcorrects, see notes)
         density_normalize_power: float = 0.0,
+        # per-point weighting of the measure loss: "uniform" (default, all cover
+        # elements pushed toward equal size) or "curvature" (penalize element mass
+        # more where the manifold bends, so elements shrink in curved regions; a
+        # no-op on homogeneous manifolds). See curvature_measure_weights.
+        measure_weighting: str = "uniform",
+        # strength of the curvature weighting in [0, 1] (0 = uniform); only used
+        # when measure_weighting="curvature".
+        measure_weighting_strength: float = 1.0,
         # base map onto the simplex: "softmax" (dense nerve) or "sparsemax"
         # (compact-support cover, sparse nerve)
         partition_of_unity_map: str = "softmax",
@@ -193,6 +201,8 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         self.model = model
         self.simplex_p = simplex_p
         self.density_normalize_power = density_normalize_power
+        self.measure_weighting = measure_weighting
+        self.measure_weighting_strength = measure_weighting_strength
         self.partition_of_unity_map = partition_of_unity_map
         self.partition_of_unity_temperature = partition_of_unity_temperature
         self.inner_layer_widths = inner_layer_widths
@@ -271,6 +281,9 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         graph = self._build_neighborhood_graph(X, next_seed())
         self.graph_ = graph
         n_points = graph.n_vertices()
+
+        # optional curvature-adaptive measure weighting (default off / uniform)
+        self._measure_point_weights = self._compute_measure_weights(X, graph)
 
         clustering, laplacian_eigenmaps = self._initialize_precover(
             X, graph, n_eigenfunctions, next_seed
@@ -352,6 +365,25 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         if self.verbose:
             print("time create graph", time.time() - time_start)
         return graph
+
+    def _compute_measure_weights(self, X, graph):
+        """Per-point measure weights for the (optional) curvature-adaptive cover.
+
+        Returns ``None`` for the default uniform weighting (exactly the historical
+        measure loss), or a mean-1 weight vector from the graph curvature proxy.
+        """
+        if self.measure_weighting == "uniform":
+            return None
+        if self.measure_weighting not in ("curvature", "curvature_inverse"):
+            raise ValueError(
+                "measure_weighting must be 'uniform', 'curvature', or "
+                f"'curvature_inverse'; got {self.measure_weighting!r}."
+            )
+        return curvature_measure_weights(
+            X, graph.adjacency_matrix(),
+            strength=self.measure_weighting_strength, bandwidth=graph.bandwidth(),
+            invert=(self.measure_weighting == "curvature_inverse"),
+        )
 
     def _initialize_precover(self, X, graph, n_eigenfunctions, next_seed):
         """Compute the clustering that initializes the optimization.
@@ -510,6 +542,7 @@ class ShapeDiscover(TransformerMixin, BaseEstimator):
         loss_function = FuzzyCoverLossFunction(
             graph, loss_weights, loss_probabilities, log=True, random_state=loss_seed,
             density_normalize_power=self.density_normalize_power,
+            measure_point_weights=getattr(self, "_measure_point_weights", None),
         )
         if self.early_stop:
             if self.early_stop_criterion == "relative_loss":
