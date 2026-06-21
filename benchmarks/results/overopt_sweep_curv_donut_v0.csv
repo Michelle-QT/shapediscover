@@ -1,0 +1,13 @@
+manifold,intrinsic_dim,betti_sum,aniso,curv,n_cover,n_points,measure_w,reg_w,seed,peak_iteration,peak_recovery,final_recovery,abs_severity,rel_severity,over_optimizes,n_active_peak,n_active_final,d_active,d_pr,d_strong_tri,d_strong_edge,strong_tri_peak,strong_tri_final,sweep,knob,knob_value
+torus,2,4,1,1,52,3000,1,10,0,60,0.578,0.149,0.42899999999999994,0.7422145328719723,1,52,40,-12,-1.1436065899253673,3,-27,50,53,curv_donut,curv_weighting,uniform
+torus,2,4,1,1,52,3000,1,10,1,20,0.28,0.093,0.18700000000000003,0.6678571428571429,1,52,37,-15,-4.2478254590606825,7,-31,46,53,curv_donut,curv_weighting,uniform
+torus,2,4,1,1,52,3000,1,10,2,60,0.531,0.125,0.406,0.7645951035781544,1,51,38,-13,-1.0831512575222018,10,-23,46,56,curv_donut,curv_weighting,uniform
+torus,2,4,1,1,52,3000,1,10,0,80,0.22,0.118,0.10200000000000001,0.4636363636363637,1,52,41,-11,-1.7180526379305423,-10,-25,73,63,curv_donut,curv_weighting,measure_curv
+torus,2,4,1,1,52,3000,1,10,1,120,0.016,0.0,0.016,1.0,0,45,37,-8,-1.3035870563422574,-24,-31,75,51,curv_donut,curv_weighting,measure_curv
+torus,2,4,1,1,52,3000,1,10,2,40,0.21,0.105,0.105,0.5,1,51,39,-12,-2.2669606902733506,22,-17,37,59,curv_donut,curv_weighting,measure_curv
+torus,2,4,1,1,52,3000,1,10,0,40,0.196,0.01,0.186,0.9489795918367346,1,52,36,-16,-4.096870109756115,-5,-36,57,52,curv_donut,curv_weighting,measure_curv_inv
+torus,2,4,1,1,52,3000,1,10,1,40,0.304,0.121,0.183,0.6019736842105263,1,51,30,-21,-4.740749434342375,-32,-59,71,39,curv_donut,curv_weighting,measure_curv_inv
+torus,2,4,1,1,52,3000,1,10,2,60,0.139,0.028,0.11100000000000002,0.7985611510791367,1,50,33,-17,-2.8365318232418435,-16,-48,56,40,curv_donut,curv_weighting,measure_curv_inv
+torus,2,4,1,1,52,3000,1,10,0,40,0.517,0.087,0.43000000000000005,0.8317214700193424,1,52,38,-14,-1.988121541125511,13,-32,56,69,curv_donut,curv_weighting,reg_curv
+torus,2,4,1,1,52,3000,1,10,1,40,0.559,0.049,0.51,0.9123434704830053,1,52,36,-16,-2.2438128526873617,-1,-39,76,75,curv_donut,curv_weighting,reg_curv
+torus,2,4,1,1,52,3000,1,10,2,40,0.412,0.191,0.22099999999999997,0.5364077669902912,1,51,39,-12,-1.821612830377486,14,-25,68,82,curv_donut,curv_weighting,reg_curv

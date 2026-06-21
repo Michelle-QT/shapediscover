@@ -1,0 +1,10 @@
+manifold,intrinsic_dim,betti_sum,aniso,curv,n_cover,n_points,measure_w,reg_w,seed,peak_iteration,peak_recovery,final_recovery,abs_severity,rel_severity,over_optimizes,n_active_peak,n_active_final,d_active,d_pr,d_strong_tri,d_strong_edge,strong_tri_peak,strong_tri_final,sweep,knob,knob_value
+torus,2,4,1,1,52,3000,1,10,0,60,0.578,0.149,0.42899999999999994,0.7422145328719723,1,52,40,-12,-1.1436065899253673,3,-27,50,53,density_donut,density_power,0.0
+torus,2,4,1,1,52,3000,1,10,1,20,0.28,0.093,0.18700000000000003,0.6678571428571429,1,52,37,-15,-4.2478254590606825,7,-31,46,53,density_donut,density_power,0.0
+torus,2,4,1,1,52,3000,1,10,2,60,0.531,0.125,0.406,0.7645951035781544,1,51,38,-13,-1.0831512575222018,10,-23,46,56,density_donut,density_power,0.0
+torus,2,4,1,1,52,3000,1,10,0,20,0.274,0.0,0.274,1.0,1,52,12,-40,-35.14699852824779,-438,-276,472,34,density_donut,density_power,1.0
+torus,2,4,1,1,52,3000,1,10,1,20,0.143,0.0,0.143,1.0,1,52,9,-43,-36.36921922333373,-478,-290,501,23,density_donut,density_power,1.0
+torus,2,4,1,1,52,3000,1,10,2,20,0.21,0.0,0.21,1.0,1,52,13,-39,-34.13455756953742,-407,-262,440,33,density_donut,density_power,1.0
+torus,2,4,1,1,52,3000,1,10,0,20,0.148,0.0,0.148,1.0,1,52,2,-50,-4.629684836570938,-22055,-1300,22100,45,density_donut,density_power,2.0
+torus,2,4,1,1,52,3000,1,10,1,20,0.119,0.0,0.119,1.0,1,52,3,-49,-7.697949737288603,-22080,-1311,22100,20,density_donut,density_power,2.0
+torus,2,4,1,1,52,3000,1,10,2,20,0.106,0.0,0.106,1.0,1,52,2,-50,-4.402810119990043,-21875,-1250,22100,225,density_donut,density_power,2.0

@@ -7,6 +7,9 @@
 # Over-optimization characterization study: a curated multi-seed dataset
 # (the controlled severity table + single-factor sweeps), tracked as a deliverable.
 !overopt_*.csv
+# Supporting committed study CSVs backing the public results page.
+!overlap_law_*.csv
+!preprocess_*.csv
 
 # Diagnostic reports / figures are regenerable scratch output.
 diagnostics/

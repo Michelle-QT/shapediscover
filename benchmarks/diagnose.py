@@ -396,8 +396,18 @@ OVERLAP_LAW_MANIFOLDS = [
 ]
 
 
+# The recovering homogeneous subset where the overlap law holds (fast: excludes
+# the high intrinsic-dim manifolds that never recover and dominate the runtime).
+RECOVERING_OVERLAP_LAW = [
+    ("circle", [8, 12, 20], 1),
+    ("sphere2", [15, 24, 40], 2),
+    ("clifford_torus", [24, 40, 52], 2),
+    ("sphere3", [24, 40, 52], 3),
+]
+
+
 def diagnose_overlap_law(manifolds=None, *, knn, seeds, n_max_iter=200,
-                         n_snapshots=8, out_dir, figures, lines):
+                         n_snapshots=8, out_dir, figures, lines, csv_path=None):
     """Frontier A: optimal overlap vs intrinsic dimension and topological complexity.
 
     Recovery is non-monotone in the mean per-point overlap (participation ratio
@@ -424,6 +434,7 @@ def diagnose_overlap_law(manifolds=None, *, knn, seeds, n_max_iter=200,
 
     plot_rows = []
     timings = []
+    csv_rows = []
     for name, ncovers, dim in manifolds:
         t_manifold = time.perf_counter()
         ds0 = ds_mod.load(name, seed=seeds[0])
@@ -452,6 +463,12 @@ def diagnose_overlap_law(manifolds=None, *, knn, seeds, n_max_iter=200,
                     best = cand
             if best is not None:
                 per_seed.append(best)
+                csv_rows.append({"manifold": name, "intrinsic_dim": dim,
+                                 "betti_sum": betti_sum, "seed": s,
+                                 "best_n_cover": best["n_cover"],
+                                 "peak_recovery": best["peak_rec"],
+                                 "pr_peak": best["pr_peak"], "pr_conv": best["pr_conv"],
+                                 "conv_recovery": best["conv_rec"]})
         if not per_seed:
             lines.append(f"| {name} | {dim} | {target} | - | (all configs skipped) "
                          "| - | - | - | - |")
@@ -489,6 +506,9 @@ def diagnose_overlap_law(manifolds=None, *, knn, seeds, n_max_iter=200,
                  "optimum (over-optimization).")
     lines.append("")
 
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
     if figures and plot_rows:
         _plot_overlap_law(plot_rows, out_dir)
     return plot_rows
@@ -722,6 +742,23 @@ def _sweep_specs():
                      for m in (0.5, 1.0, 2.0, 4.0)]
     clifford_reg = [(r, {}, True, {"loss_weights": [1, 0, 0, r]}, 52)
                     for r in (5, 10, 20, 40)]
+    # negative-lever reassessments (off-by-default knobs, run at default loss
+    # weights). density-normalization of the Dirichlet energies (the ÷h^power arc)
+    # and curvature-adaptive weighting (the Track-1 lever). Each compares the knob
+    # against the unmodified default on the donut.
+    density_donut = [(p, {}, True, {"density_normalize_power": p}, 52)
+                     for p in (0.0, 1.0, 2.0)]
+    density_circle = [(p, {}, True, {"density_normalize_power": p}, 12)
+                      for p in (0.0, 1.0, 2.0)]
+    curv_donut = [
+        ("uniform", {}, True, None, 52),
+        ("measure_curv", {}, True,
+         {"measure_weighting": "curvature", "measure_weighting_strength": 1.0}, 52),
+        ("measure_curv_inv", {}, True,
+         {"measure_weighting": "curvature_inverse", "measure_weighting_strength": 1.0}, 52),
+        ("reg_curv", {}, True,
+         {"regularity_weighting": "curvature", "regularity_weighting_strength": 1.0}, 52),
+    ]
     return {
         "donut_r2": ("torus", "r2", donut_r2),
         "donut_sampling": ("torus", "sampling", donut_sampling),
@@ -730,6 +767,9 @@ def _sweep_specs():
         "donut_reg": ("torus", "reg_weight", donut_reg),
         "donut_measure": ("torus", "measure_weight", donut_measure),
         "clifford_reg": ("clifford_torus", "reg_weight", clifford_reg),
+        "density_donut": ("torus", "density_power", density_donut),
+        "density_circle": ("circle", "density_power", density_circle),
+        "curv_donut": ("torus", "curv_weighting", curv_donut),
     }
 
 
@@ -903,6 +943,50 @@ def diagnose_n_axis(name, n_values, *, knn, seeds, n_max_iter=250, n_snapshots=1
     return csv_rows
 
 
+def diagnose_preprocess_compare(manifolds, *, knn, seeds, kinds=("none", "standardize",
+                                "whiten"), csv_path=None, lines):
+    """Recovery under each feature-preprocessing kind (the normalization policy).
+
+    For each manifold, load the raw features and fit the shipped default pipeline
+    (early stop ON) on the raw / standardized / whitened features, recording the
+    homology-recovery quotient (multi-seed). Tests the policy claim that
+    normalization is not free: standardizing already-isotropic data can hurt, while
+    whitening rescues linearly anisotropic data.
+    """
+    from shapediscover import ShapeDiscover
+
+    lines.append(f"## Preprocessing comparison (recovery, seeds={list(seeds)}, "
+                 "default pipeline)\n")
+    lines.append("| manifold | n_cover | " + " | ".join(kinds) + " |")
+    lines.append("|---|---|" + "---|" * len(kinds))
+    csv_rows = []
+    for name in manifolds:
+        ncov = NATURAL_N_COVER.get(name, 52)
+        meds = {}
+        for kind in kinds:
+            recs = []
+            for s in seeds:
+                ds = ds_mod.load(name, seed=s, preprocess=False)
+                X = ds_mod._preprocess(ds.X, kind) if kind != "none" else ds.X
+                est = ShapeDiscover(n_cover=ncov, knn=knn, random_state=s,
+                                    verbose=False, plot_loss_curve=False)
+                cover = np.asarray(est.fit_transform(X)).T
+                rec = cd.filtration_recovery(cover, ds.target_betti, filtration="birth",
+                                             max_dimension=len(ds.target_betti) - 1,
+                                             field=ds.homology_field)
+                recs.append(rec["recovery_quotient"])
+                csv_rows.append({"manifold": name, "n_cover": ncov, "preprocess": kind,
+                                 "seed": s, "recovery": rec["recovery_quotient"]})
+            meds[kind] = float(np.median(recs))
+        lines.append(f"| {name} | {ncov} | "
+                     + " | ".join(f"{meds[k]:.3f}" for k in kinds) + " |")
+    lines.append("")
+    if csv_path is not None:
+        _write_csv(csv_path, csv_rows)
+        lines.append(f"[tidy per-seed rows -> {csv_path}]\n")
+    return csv_rows
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -944,6 +1028,12 @@ def main(argv=None):
                         help="contrast the iteration axis (early stop off) with the "
                              "n_points / early-stop axis: MANIFOLD N1 N2 ... "
                              "(e.g. --n-axis circle 400 800 1600 3200)")
+    parser.add_argument("--recovering-only", action="store_true",
+                        help="(--overlap-law) restrict to the recovering homogeneous "
+                             "subset (circle/sphere2/clifford_torus/sphere3), fast")
+    parser.add_argument("--preprocess-compare", nargs="+", metavar="MANIFOLD",
+                        help="recovery under none/standardize/whiten preprocessing "
+                             "for each MANIFOLD (the per-dataset normalization policy)")
     parser.add_argument("--loss-weights", nargs=4, type=float, default=None,
                         metavar=("M", "G", "T", "R"),
                         help="(--over-opt-classify) override loss_weights "
@@ -989,8 +1079,11 @@ def main(argv=None):
         return
 
     if args.overlap_law:
-        diagnose_overlap_law(knn=args.knn, seeds=tuple(range(args.seeds)),
-                             out_dir=out_dir, figures=figures, lines=lines)
+        csv_path = args.csv or (out_dir / "overlap_law.csv")
+        manifolds = RECOVERING_OVERLAP_LAW if args.recovering_only else None
+        diagnose_overlap_law(manifolds=manifolds, knn=args.knn,
+                             seeds=tuple(range(args.seeds)), out_dir=out_dir,
+                             figures=figures, lines=lines, csv_path=csv_path)
         report = "\n".join(lines)
         (out_dir / "report_overlap_law.md").write_text(report)
         print(report)
@@ -1039,6 +1132,17 @@ def main(argv=None):
                               lines=lines)
         report = "\n".join(lines)
         (out_dir / f"report_factor_sweep_{fname}_{knob}.md").write_text(report)
+        print(report)
+        print(f"\n[diagnostics written to {out_dir}]")
+        return
+
+    if args.preprocess_compare:
+        csv_path = args.csv or (out_dir / "preprocess_compare.csv")
+        diagnose_preprocess_compare(args.preprocess_compare, knn=args.knn,
+                                    seeds=tuple(range(args.seeds)), csv_path=csv_path,
+                                    lines=lines)
+        report = "\n".join(lines)
+        (out_dir / "report_preprocess_compare.md").write_text(report)
         print(report)
         print(f"\n[diagnostics written to {out_dir}]")
         return

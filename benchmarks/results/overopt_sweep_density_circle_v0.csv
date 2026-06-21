@@ -1,0 +1,10 @@
+manifold,intrinsic_dim,betti_sum,aniso,curv,n_cover,n_points,measure_w,reg_w,seed,peak_iteration,peak_recovery,final_recovery,abs_severity,rel_severity,over_optimizes,n_active_peak,n_active_final,d_active,d_pr,d_strong_tri,d_strong_edge,strong_tri_peak,strong_tri_final,sweep,knob,knob_value
+circle,1,2,0,0,12,400,1,10,0,250,0.185,0.185,0.0,0.0,0,11,11,0,0.0,,0,,,density_circle,density_power,0.0
+circle,1,2,0,0,12,400,1,10,1,120,0.258,0.181,0.07700000000000001,0.2984496124031008,1,11,11,0,-0.12498965901736914,,-1,,,density_circle,density_power,0.0
+circle,1,2,0,0,12,400,1,10,2,250,0.762,0.762,0.0,0.0,0,12,12,0,0.0,,0,,,density_circle,density_power,0.0
+circle,1,2,0,0,12,400,1,10,0,80,0.123,0.013,0.11,0.8943089430894309,1,10,7,-3,-2.6718731797122746,,-8,,,density_circle,density_power,1.0
+circle,1,2,0,0,12,400,1,10,1,250,0.313,0.313,0.0,0.0,0,7,7,0,0.0,,0,,,density_circle,density_power,1.0
+circle,1,2,0,0,12,400,1,10,2,140,0.921,0.857,0.06400000000000006,0.06948968512486434,1,9,7,-2,-1.6241310886534528,,-15,,,density_circle,density_power,1.0
+circle,1,2,0,0,12,400,1,10,0,120,0.167,0.0,0.167,1.0,1,8,6,-2,0.3942495353841249,,14,,,density_circle,density_power,2.0
+circle,1,2,0,0,12,400,1,10,1,120,0.289,0.0,0.289,1.0,1,9,6,-3,0.3589837336621251,,17,,,density_circle,density_power,2.0
+circle,1,2,0,0,12,400,1,10,2,140,0.983,0.98,0.0030000000000000027,0.003051881993896239,0,8,6,-2,0.49034603897030493,,5,,,density_circle,density_power,2.0
