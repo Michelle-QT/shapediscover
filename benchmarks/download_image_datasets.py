@@ -1,14 +1,14 @@
 """One-off downloader for the standard image benchmarks (needs network).
 
-Pulls MNIST / Fashion-MNIST / CIFAR-10 via torchvision, subsamples each to a
-size our O(n) method handles, and saves ``<name>_X.npy`` / ``<name>_y.npy`` into
-``examples/datasets/`` so the benchmark loaders can read them offline afterwards.
-
-Run once (with network), from the repo root::
+Pulls MNIST / Fashion-MNIST / CIFAR-10 via torchvision and saves the FULL
+``<name>_X.npy`` / ``<name>_y.npy`` into ``examples/datasets/`` (no subsampling;
+the loaders subsample on demand via an ``n`` kwarg, so the full data is available
+when wanted). Run once (with network), from the repo root::
 
     python -m benchmarks.download_image_datasets
 
-Idempotent: skips a dataset whose .npy files already exist.
+Idempotent: skips a dataset whose .npy files already exist. The .npy files are
+large (MNIST/Fashion ~180 MB, CIFAR-10 ~600 MB) and gitignored.
 """
 
 from __future__ import annotations
@@ -18,18 +18,12 @@ from pathlib import Path
 import numpy as np
 
 OUT = Path(__file__).resolve().parent.parent / "examples" / "datasets"
-N_SUBSAMPLE = 4000
-SEED = 0
 
 
 def _save(name: str, X: np.ndarray, y: np.ndarray) -> None:
-    rng = np.random.default_rng(SEED)
-    if len(X) > N_SUBSAMPLE:
-        idx = rng.choice(len(X), size=N_SUBSAMPLE, replace=False)
-        X, y = X[idx], y[idx]
     np.save(OUT / f"{name}_X.npy", X.astype(np.float32))
     np.save(OUT / f"{name}_y.npy", y.astype(np.int64))
-    print(f"  saved {name}: X {X.shape}, y {y.shape}")
+    print(f"  saved {name}: X {X.shape}, y {y.shape} (full)")
 
 
 def main() -> None:

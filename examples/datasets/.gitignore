@@ -1,1 +1,7 @@
 3figures_0_0_6/*
+
+# Downloaded image benchmarks (large; pulled by download_image_datasets.py)
+mnist_*.npy
+fashion_mnist_*.npy
+cifar10_*.npy
+_torchvision_cache/
