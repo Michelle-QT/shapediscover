@@ -308,6 +308,33 @@ def _ds_clifford_torus(seed: int = 0, n: int = 3000, noise: float = 0.0) -> Benc
     )
 
 
+@register("anisotropic_torus")
+def _ds_anisotropic_torus(seed: int = 0, n: int = 3000, ratio: float = 0.4,
+                          noise: float = 0.0) -> BenchmarkDataset:
+    """Flat torus (S^1 x S^1) in R^4 with UNEQUAL cycle radii (1 and ``ratio``).
+
+    Zero Gaussian curvature, but the two H1 cycles live at different geometric
+    scales. This isolates *cycle-scale anisotropy* from curvature: recovery
+    collapses as ``ratio`` shrinks (e.g. ~0 at ratio 0.35) on raw features, but is
+    fully restored by scale-normalization (``preprocessing="standardize"`` or
+    ``"whiten"``), which is why this dataset declares ``whiten``. The driver of the
+    R^3 ``torus`` (donut) difficulty is largely this anisotropy, not curvature
+    (see the project notes); the donut additionally has a nonlinear/local part
+    that global whitening does not fix.
+    """
+    rng = np.random.default_rng(seed)
+    a = rng.random(n) * 2 * np.pi
+    b = rng.random(n) * 2 * np.pi
+    X = np.stack([np.cos(a), np.sin(a), ratio * np.cos(b), ratio * np.sin(b)], axis=1)
+    if noise:
+        X = X + rng.normal(scale=np.sqrt(noise), size=X.shape)
+    return BenchmarkDataset(
+        "anisotropic_torus", X, target_betti=[1, 2, 1], axes=(TOPOLOGY,),
+        preprocessing="whiten",
+        metadata={"n": n, "ratio": ratio, "noise": noise, "intrinsic_dim": 2},
+    )
+
+
 @register("torus3")
 def _ds_torus3(seed: int = 0, n: int = 4000, noise: float = 0.0) -> BenchmarkDataset:
     """Flat 3-torus (S^1)^3 in R^6, Betti [1,3,3,1] (binomials C(3,j)).
@@ -569,6 +596,16 @@ def _preprocess(X: np.ndarray, kind: str) -> np.ndarray:
         from sklearn.preprocessing import StandardScaler
 
         return StandardScaler().fit_transform(X)
+    if kind == "whiten":
+        # PCA-sphering: center, rotate to the covariance eigenbasis, and scale each
+        # component to unit variance. Removes global *linear* anisotropy (unlike
+        # per-feature standardize, it is rotation-invariant), which fully restores
+        # recovery on anisotropically-scaled embeddings (see anisotropic_torus).
+        Xc = X - X.mean(axis=0)
+        cov = np.cov(Xc, rowvar=False)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        scale = 1.0 / np.sqrt(np.maximum(eigvals, 1e-9))
+        return Xc @ (eigvecs * scale)
     if kind == "unit_norm":
         norms = np.linalg.norm(X, axis=1, keepdims=True)
         norms[norms == 0] = 1.0

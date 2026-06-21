@@ -39,6 +39,20 @@ def test_manifold_shape_and_betti(name):
     assert np.isfinite(ds.X).all()
 
 
+def test_anisotropic_torus_and_whiten():
+    # raw is anisotropic (unequal cycle scales); whitening makes it isotropic.
+    raw = datasets.load("anisotropic_torus", seed=0, preprocess=False)
+    assert raw.target_betti == [1, 2, 1]
+    assert raw.X.shape[1] == 4
+    # the two cycle "planes" have very different scales in the raw embedding
+    raw_std = raw.X.std(axis=0)
+    assert raw_std[:2].mean() > 2 * raw_std[2:].mean()
+    # whitened (the declared preprocessing): all components ~unit variance
+    white = datasets.load("anisotropic_torus", seed=0)
+    assert white.metadata["preprocessing"] == "whiten"
+    assert np.allclose(white.X.std(axis=0), white.X.std(axis=0)[0], rtol=0.1)
+
+
 def test_noise_negative_control():
     ds = datasets.load("noise", seed=0)
     assert ds.target_betti == [1, 0, 0]
